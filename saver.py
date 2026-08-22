@@ -620,17 +620,22 @@ class ХранительМод(loader.Module):
             await self._deliver(box, card)
             return
 
-        flags = {"voice_note": kind == "voice", "video_note": kind == "round"}
+        flags = {
+            "voice_note": kind == "voice",
+            "video_note": kind == "round",
+            "attributes": grabbed["attributes"],
+        }
+        file = grabbed["file"]
 
         if len(card) <= 1024:
-            await self._deliver(box, card, file=grabbed, **flags)
+            await self._deliver(box, card, file=file, **flags)
             return
 
-        await self._deliver(box, head, file=grabbed, **flags)
+        await self._deliver(box, head, file=file, **flags)
         await self._deliver(box, card)
 
     async def _grab(self, source, kind: str):
-        """Скачать файл в память. None — если не отдался."""
+        """Файл в память вместе с родными атрибутами. None — если не отдался."""
         if source is None:
             return None
 
@@ -650,19 +655,53 @@ class ХранительМод(loader.Module):
             return None
 
         buffer = io.BytesIO(data)
-        buffer.name = FILENAMES.get(kind, "file.bin")
+        buffer.name = self._filename(source, kind)
 
-        return buffer
+        return {"file": buffer, "attributes": self._carry(source)}
 
     @staticmethod
-    def _size(source):
+    def _document(source):
+        """Документ — и у сообщения, и у голого медиа из кэша."""
+        direct = getattr(source, "document", None)
+
+        if direct is not None:
+            return direct
+
+        return getattr(getattr(source, "media", None), "document", None)
+
+    def _size(self, source):
         """Вес файла — и у сообщения, и у голого медиа из кэша."""
         direct = getattr(getattr(source, "file", None), "size", None)
 
-        if direct:
-            return direct
+        return direct or getattr(self._document(source), "size", None)
 
-        return getattr(getattr(source, "document", None), "size", None)
+    def _carry(self, source) -> list:
+        """Родные атрибуты файла.
+
+        Без них Telethon подставляет свои: если в системе нет hachoir, он
+        пишет видео w=1, h=1, duration=0 — клиент считает картинку
+        квадратной и растягивает её. Плюс у голосовых так сохраняется
+        дорожка громкости, а у кружков — признак круглого сообщения.
+        """
+        document = self._document(source)
+
+        return [
+            attribute
+            for attribute in (getattr(document, "attributes", None) or [])
+            if not isinstance(attribute, types.DocumentAttributeFilename)
+        ]
+
+    def _filename(self, source, kind: str) -> str:
+        """Родное имя файла, если оно было: по нему Telegram узнаёт формат."""
+        document = self._document(source)
+
+        for attribute in getattr(document, "attributes", None) or []:
+            name = getattr(attribute, "file_name", None)
+
+            if name and "." in name:
+                return name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+
+        return FILENAMES.get(kind, "file.bin")
 
     async def _box(self, kind: str):
         """Канал-хранилище: взять из базы, а нет — завести."""
