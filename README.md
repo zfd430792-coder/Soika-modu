@@ -13,6 +13,7 @@
 |---|---|---|
 | [`template.py`](template.py) | `.template` | скелет: скопировал, переименовал, пишешь |
 | [`counter.py`](counter.py) | `.count`, `.counts`, `.delcount` | образец: база, кнопки, конфиг |
+| [`username.py`](username.py) | `.uz`, `.uzadd`, `.uzdel`, `.uzlist` | ждёт, когда освободится чужой юзернейм, и занимает его каналом |
 
 ---
 
