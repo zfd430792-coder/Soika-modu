@@ -122,6 +122,18 @@ class ХранительМод(loader.Module):
         # ── команды ─────────────────────────────────────────────────────
         "made": "📦 <b>Каналы готовы</b>\n\n├ {}\n└ {}",
         "make_failed": "⚠️ <b>Не вышло завести каналы:</b> <code>{}</code>",
+        "clean_none": (
+            "🧹 <b>Лишних хранилищ нет</b>\n\n"
+            "<i>Каналы на месте, дубликатов не завелось.</i>"
+        ),
+        "clean_found": "🧹 <b>Брошенных хранилищ: {}</b>\n\n{}\n\n{}",
+        "clean_row": "▫️ <b>{}</b> · <code>{}</code>",
+        "clean_warn": (
+            "⚠️ <b>Внутри может лежать сохранённое — удаление не отменить.</b>"
+        ),
+        "clean_hint": "<i>Снести:</i> <code>{}saverclean снести</code>",
+        "clean_done": "🧹 <b>Снесено хранилищ: {}</b>",
+        "clean_partial": "\n<i>Не поддались: {}</i>",
         "ignored": "🙈 <b>Этот чат больше не трогаю</b>",
         "unignored": "👀 <b>Снова слежу за этим чатом</b>",
         "ignore_pm_only": "🚫 <b>Тут нечего игнорировать</b>",
@@ -133,10 +145,12 @@ class ХранительМод(loader.Module):
         "btn_box_media": "↗️ Одноразовое",
         "btn_box_trash": "↗️ Удалённое",
         "btn_make": "🧰 Завести каналы",
+        "btn_wipe": "🗑 Снести всё",
         "btn_refresh": "🔄 Обновить",
         "btn_close": "✖️ Закрыть",
         "cb_saved": "✅ Готово",
         "cb_working": "⏳ Секунду…",
+        "cb_wiping": "🗑 Сношу…",
         # ── единицы ─────────────────────────────────────────────────────
         "u_day": "{} дн.",
         "u_hour": "{} ч.",
@@ -224,6 +238,18 @@ class ХранительМод(loader.Module):
         ),
         "made": "📦 <b>Channels ready</b>\n\n├ {}\n└ {}",
         "make_failed": "⚠️ <b>Could not create the channels:</b> <code>{}</code>",
+        "clean_none": (
+            "🧹 <b>No stray channels</b>\n\n"
+            "<i>The boxes are in place, no duplicates around.</i>"
+        ),
+        "clean_found": "🧹 <b>Abandoned boxes: {}</b>\n\n{}\n\n{}",
+        "clean_row": "▫️ <b>{}</b> · <code>{}</code>",
+        "clean_warn": (
+            "⚠️ <b>They may hold saved media — deleting cannot be undone.</b>"
+        ),
+        "clean_hint": "<i>To delete:</i> <code>{}saverclean wipe</code>",
+        "clean_done": "🧹 <b>Boxes deleted: {}</b>",
+        "clean_partial": "\n<i>Survived: {}</i>",
         "ignored": "🙈 <b>Skipping this chat from now on</b>",
         "unignored": "👀 <b>Watching this chat again</b>",
         "ignore_pm_only": "🚫 <b>Nothing to skip here</b>",
@@ -234,10 +260,12 @@ class ХранительМод(loader.Module):
         "btn_box_media": "↗️ One-time",
         "btn_box_trash": "↗️ Deleted",
         "btn_make": "🧰 Create channels",
+        "btn_wipe": "🗑 Delete them",
         "btn_refresh": "🔄 Refresh",
         "btn_close": "✖️ Close",
         "cb_saved": "✅ Done",
         "cb_working": "⏳ One moment…",
+        "cb_wiping": "🗑 Deleting…",
         "u_day": "{}d",
         "u_hour": "{}h",
         "u_min": "{}m",
@@ -355,14 +383,12 @@ class ХранительМод(loader.Module):
     @loader.owner
     @loader.command()
     async def savermakecmd(self, message):
-        """— завести каналы-хранилища заново"""
+        """— завести каналы-хранилища, если их ещё нет"""
         sent = await utils.answer(message, self.strings["cb_working"])
 
         try:
-            self.set("media_box", None)
-            self.set("trash_box", None)
-            media = await self._box("media")
-            trash = await self._box("trash")
+            await self._box("media")
+            await self._box("trash")
         except Exception as error:
             logger.exception("Каналы-хранилища не завелись")
             await utils.answer(
@@ -374,7 +400,8 @@ class ХранительМод(loader.Module):
         await self._answer(
             sent,
             self.strings["made"].format(
-                self._box_name(media, "media"), self._box_name(trash, "trash")
+                self._box_name(self.get("media_box"), "media"),
+                self._box_name(self.get("trash_box"), "trash"),
             ),
         )
 
@@ -402,9 +429,79 @@ class ХранительМод(loader.Module):
         self.config_complete()
         await utils.answer(message, answer)
 
+    @loader.owner
+    @loader.command(aliases=["хранительчистка"])
+    async def savercleancmd(self, message):
+        """[снести] — найти брошенные хранилища и, с подтверждением, удалить"""
+        confirmed = utils.get_args_raw(message).strip().lower() in {
+            "снести",
+            "wipe",
+            "да",
+            "yes",
+        }
+        sent = await utils.answer(message, self.strings["cb_working"])
+
+        try:
+            extra = await self._orphans()
+        except Exception as error:
+            logger.exception("Диалоги не перебрались")
+            await utils.answer(
+                sent, self.strings["make_failed"].format(utils.escape_html(str(error)))
+            )
+            return
+
+        if not extra:
+            await utils.answer(sent, self.strings["clean_none"])
+            return
+
+        if confirmed:
+            await utils.answer(sent, await self._wipe(extra))
+            return
+
+        text = self.strings["clean_found"].format(
+            len(extra),
+            "\n".join(
+                self.strings["clean_row"].format(
+                    utils.escape_html(chat.title or "—"), chat.id
+                )
+                for chat in extra
+            ),
+            self.strings["clean_warn"],
+        )
+
+        if self.inline is not None and self.inline.init_complete:
+            if await self.inline.form(
+                text,
+                message=sent,
+                reply_markup=[
+                    [{"text": self.strings["btn_wipe"], "callback": self._wipe_now}],
+                    [{"text": self.strings["btn_close"], "callback": self._close}],
+                ],
+            ):
+                return
+
+        await utils.answer(
+            sent, f"{text}\n\n{self.strings['clean_hint'].format(self._prefix)}"
+        )
+
     # ------------------------------------------------------------------ #
     #  Кнопки
     # ------------------------------------------------------------------ #
+    async def _wipe_now(self, call) -> None:
+        await call.answer(self.strings["cb_wiping"])
+
+        # Список собираем заново: за время раздумий часть каналов могли
+        # снести руками, а сносить по устаревшему списку — плохая идея.
+        try:
+            extra = await self._orphans()
+        except Exception:
+            logger.exception("Диалоги не перебрались")
+            return
+
+        await call.edit(
+            await self._wipe(extra) if extra else self.strings["clean_none"]
+        )
+
     async def _toggle(self, call, key: str) -> None:
         self.config[key] = not self.config[key]
         await call.answer(self.strings["cb_saved"])
@@ -659,6 +756,22 @@ class ХранительМод(loader.Module):
 
         return {"file": buffer, "attributes": self._carry(source)}
 
+    @property
+    def _prefix(self) -> str:
+        return self.client.dispatcher.prefixes[0]
+
+    @staticmethod
+    def _gone(error) -> bool:
+        """Правда ли канал недоступен, а не просто сорвалась отправка."""
+        text = (
+            f"{getattr(error, 'message', '') or ''} {error} {type(error).__name__}"
+        ).upper().replace("_", "")
+
+        return any(
+            mark in text
+            for mark in ("CHANNELINVALID", "CHANNELPRIVATE", "PEERIDINVALID", "CHATIDINVALID")
+        )
+
     @staticmethod
     def _document(source):
         """Документ — и у сообщения, и у голого медиа из кэша."""
@@ -703,40 +816,146 @@ class ХранительМод(loader.Module):
 
         return FILENAMES.get(kind, "file.bin")
 
+    def _peer(self, kind: str):
+        """Хранилище из базы: id вместе с access_hash.
+
+        По одному id телетон канал не соберёт — access_hash он ищет в кэше
+        сессии, а тот бывает пустым. Раз промах кэша больше не значит, что
+        канала нет, дубликаты не плодятся.
+        """
+        raw, access = self.get(f"{kind}_box"), self.get(f"{kind}_hash")
+
+        if not raw or not access:
+            return None
+
+        return types.InputPeerChannel(
+            channel_id=int(str(raw).removeprefix("-100")),
+            access_hash=int(access),
+        )
+
+    def _keep(self, kind: str, chat) -> None:
+        """Запомнить хранилище так, чтобы его потом точно нашли."""
+        self.set(f"{kind}_box", int(f"-100{chat.id}"))
+        self.set(f"{kind}_hash", int(getattr(chat, "access_hash", 0) or 0))
+
+    def _forget(self, kind: str) -> None:
+        self.set(f"{kind}_box", None)
+        self.set(f"{kind}_hash", None)
+
+    async def _find(self, raw: int):
+        """Найти канал по id: сперва кэш телетона, потом диалоги."""
+        try:
+            return await self.client.get_entity(raw)
+        except Exception:
+            logger.info("Канала %s нет в кэше, смотрю диалоги", raw)
+
+        async for dialog in self.client.iter_dialogs():
+            if dialog.id == raw:
+                return dialog.entity
+
+        return None
+
     async def _box(self, kind: str):
-        """Канал-хранилище: взять из базы, а нет — завести."""
+        """Канал-хранилище. Новый заводим, только если старого правда нет."""
         async with self._lock:
-            stored = self.get(f"{kind}_box")
+            peer = self._peer(kind)
 
-            if stored:
-                try:
-                    return await self.client.get_entity(int(stored))
-                except Exception:
-                    logger.warning("Канал %s пропал, завожу заново", kind)
+            if peer is not None:
+                return peer
 
-            created = await self.client(
-                functions.channels.CreateChannelRequest(
-                    title=self.strings[f"box_{kind}"],
-                    about=self.strings[f"about_{kind}"],
-                    broadcast=True,
-                    megagroup=False,
-                )
+            raw = self.get(f"{kind}_box")
+
+            if raw:
+                # Запись из старой версии — без access_hash. Дописываем его,
+                # вместо того чтобы бросать канал и заводить новый.
+                found = await self._find(int(raw))
+
+                if found is not None:
+                    self._keep(kind, found)
+                    return self._peer(kind)
+
+                logger.warning("Канал %s не нашёлся ни в кэше, ни в диалогах", kind)
+
+            return await self._create(kind)
+
+    async def _create(self, kind: str):
+        """Завести новое хранилище и обжить его."""
+        created = await self.client(
+            functions.channels.CreateChannelRequest(
+                title=self.strings[f"box_{kind}"],
+                about=self.strings[f"about_{kind}"],
+                broadcast=True,
+                megagroup=False,
             )
-            chat = created.chats[0]
-            self.set(f"{kind}_box", int(f"-100{chat.id}"))
+        )
+        chat = created.chats[0]
+        self._keep(kind, chat)
 
+        try:
+            hello = await self.client.send_message(
+                chat, self.strings[f"hello_{kind}"], link_preview=False
+            )
+            await self.client.pin_message(chat, hello, notify=False)
+        except Exception:
+            logger.exception("Приветствие в %s не ушло", kind)
+
+        if self.config["hide_boxes"]:
+            await self._hide(chat)
+
+        return chat
+
+    async def _orphans(self) -> list:
+        """Каналы, которые модуль завёл раньше и бросил.
+
+        Берём только свои приватные каналы с нашими же названиями и,
+        разумеется, никогда — те два, что используются сейчас.
+        """
+        english = getattr(type(self), "strings_en", None) or {}
+        titles = {
+            self.strings["box_media"],
+            self.strings["box_trash"],
+            english.get("box_media"),
+            english.get("box_trash"),
+        }
+        current = {self.get("media_box"), self.get("trash_box")}
+        found = []
+
+        async for dialog in self.client.iter_dialogs():
+            chat = dialog.entity
+
+            if dialog.id in current or not isinstance(chat, types.Channel):
+                continue
+
+            if not (getattr(chat, "broadcast", False) and getattr(chat, "creator", False)):
+                continue
+
+            if getattr(chat, "username", None) or chat.title not in titles:
+                continue
+
+            found.append(chat)
+
+        return found
+
+    async def _wipe(self, chats: list) -> str:
+        """Снести брошенные хранилища. Отменить это нельзя."""
+        killed, failed = 0, 0
+
+        for chat in chats:
             try:
-                hello = await self.client.send_message(
-                    chat, self.strings[f"hello_{kind}"], link_preview=False
+                await self.client(
+                    functions.channels.DeleteChannelRequest(channel=chat)
                 )
-                await self.client.pin_message(chat, hello, notify=False)
+                killed += 1
             except Exception:
-                logger.exception("Приветствие в %s не ушло", kind)
+                logger.exception("Канал %s не сносится", chat.id)
+                failed += 1
 
-            if self.config["hide_boxes"]:
-                await self._hide(chat)
+        answer = self.strings["clean_done"].format(killed)
 
-            return chat
+        if failed:
+            answer += self.strings["clean_partial"].format(failed)
+
+        return answer
 
     async def _hide(self, chat) -> None:
         """Убрать канал в архив и заглушить — чтобы не мозолил глаза."""
@@ -784,11 +1003,13 @@ class ХранительМод(loader.Module):
             except errors.FloodWaitError as error:
                 logger.warning("Telegram просит подождать %s сек.", error.seconds)
                 return None
-            except Exception:
+            except Exception as error:
                 logger.exception("В канал %s отправить не вышло", kind)
 
-                if attempt == 1:
-                    self.set(f"{kind}_box", None)
+                # Сорванная отправка — ещё не повод бросать канал: заведём
+                # новый только если Telegram сказал, что старого больше нет.
+                if attempt == 1 and self._gone(error):
+                    self._forget(kind)
 
                     if file is not None and hasattr(file, "seek"):
                         file.seek(0)
