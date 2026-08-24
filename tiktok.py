@@ -11,6 +11,7 @@
 
 import io
 import logging
+import random
 import re
 import struct
 
@@ -33,7 +34,15 @@ AWEME = re.compile(r"/(?:video|photo|v)/(\d+)|[?&]item_id=(\d+)")
 #: Короткие ссылки, которые сначала надо развернуть
 SHORT = re.compile(r"//(?:vm|vt)\.tiktok\.com/|/t/", re.IGNORECASE)
 
-FEED = "https://api16-normal-c-useast1a.tiktokv.com/aweme/v1/feed/"
+#: Зеркала одного и того же API. Одно отвечает 429 — идём к следующему
+HOSTS = (
+    "api16-normal-c-useast1a.tiktokv.com",
+    "api19-normal-c-useast1a.tiktokv.com",
+    "api22-normal-c-useast2a.tiktokv.com",
+    "api16-normal-c-alisg.tiktokv.com",
+    "api-h2.tiktokv.com",
+)
+
 TIKWM = "https://www.tikwm.com/api/"
 
 ANDROID = (
@@ -63,15 +72,22 @@ class ТиктокМод(loader.Module):
             " и полная</i> <code>tiktok.com/@ник/video/…</code>"
         ),
         "working": "⏳ <b>Тащу видео…</b>",
-        "failed": (
-            "⚠️ <b>Не вышло достать видео</b>\n\n{}\n\n"
+        "failed": "⚠️ <b>Не вышло достать видео</b>\n\n{}\n\n{}",
+        "foot_order": (
             "<i>Если это повторяется, поменяй порядок источников в</i>"
             " <code>{}cfg</code>"
+        ),
+        "foot_blocked": (
+            "🚧 <b>Похоже, TikTok режет твой сервер</b>\n"
+            "<i>Пропиши прокси:</i> <code>{}cfg</code> <i>→ Тикток → proxy</i>"
         ),
         "line_failed": "├ <b>{}:</b> {}",
         "line_last": "└ <b>{}:</b> {}",
         "reason_empty": "ничего не вернул",
         "reason_http": "ответил {}",
+        "reason_http_body": "ответил {} · <code>{}</code>",
+        "reason_hosts": "все зеркала · <code>{}</code>",
+        "reason_said": "отказал · <code>{}</code>",
         "reason_timeout": "не ответил вовремя",
         "reason_broken": "прислал непонятное",
         "too_big": (
@@ -111,15 +127,22 @@ class ТиктокМод(loader.Module):
             " <code>tiktok.com/@name/video/…</code> <i>work</i>"
         ),
         "working": "⏳ <b>Fetching the video…</b>",
-        "failed": (
-            "⚠️ <b>Could not get the video</b>\n\n{}\n\n"
+        "failed": "⚠️ <b>Could not get the video</b>\n\n{}\n\n{}",
+        "foot_order": (
             "<i>If this keeps happening, reorder the sources in</i>"
             " <code>{}cfg</code>"
+        ),
+        "foot_blocked": (
+            "🚧 <b>Looks like TikTok is throttling your server</b>\n"
+            "<i>Set a proxy:</i> <code>{}cfg</code> <i>→ TikTok → proxy</i>"
         ),
         "line_failed": "├ <b>{}:</b> {}",
         "line_last": "└ <b>{}:</b> {}",
         "reason_empty": "returned nothing",
         "reason_http": "answered {}",
+        "reason_http_body": "answered {} · <code>{}</code>",
+        "reason_hosts": "every mirror refused · <code>{}</code>",
+        "reason_said": "refused · <code>{}</code>",
         "reason_timeout": "timed out",
         "reason_broken": "sent something unreadable",
         "too_big": (
@@ -187,6 +210,15 @@ class ТиктокМод(loader.Module):
             100,
             "Тяжелее скольки мегабайт не качать",
             validator=loader.validators.Integer(minimum=1, maximum=2000),
+        ),
+        loader.ConfigValue(
+            "proxy",
+            "",
+            (
+                "HTTP-прокси, если TikTok режет твой сервер:"
+                " http://логин:пароль@хост:порт. Пусто — без прокси"
+            ),
+            validator=loader.validators.String(max_len=256),
         ),
         loader.ConfigValue(
             "timeout",
@@ -259,19 +291,25 @@ class ТиктокМод(loader.Module):
 
             try:
                 post = await handler(session, link)
-            except aiohttp.ServerTimeoutError:
+            except (aiohttp.ServerTimeoutError, TimeoutError):
                 troubles.append((name, self.strings["reason_timeout"]))
                 continue
             except aiohttp.ClientResponseError as error:
                 troubles.append((name, self.strings["reason_http"].format(error.status)))
                 continue
-            except Exception as error:
+            except Exception:
                 logger.exception("Источник %s не отдал ролик", name)
                 troubles.append((name, self.strings["reason_broken"]))
                 continue
 
+            # Источник возвращает либо разобранный пост, либо строку с тем,
+            # почему не вышло — её и показываем.
             if post is None:
                 troubles.append((name, self.strings["reason_empty"]))
+                continue
+
+            if isinstance(post, str):
+                troubles.append((name, post))
                 continue
 
             self.set("lucky", name)
@@ -289,29 +327,53 @@ class ТиктокМод(loader.Module):
         if not found:
             return None
 
+        aweme = found.group(1) or found.group(2)
+        # Идентификаторы разные при каждом запросе: лимит у TikTok висит на
+        # устройстве, и с одним и тем же он быстро упирается в 429.
         params = {
-            "aweme_id": found.group(1) or found.group(2),
-            "version_code": "2613",
+            "aweme_id": aweme,
+            "device_id": str(random.randint(10 ** 18, 10 ** 19 - 1)),
+            "iid": str(random.randint(10 ** 18, 10 ** 19 - 1)),
+            "openudid": f"{random.getrandbits(64):016x}",
+            "version_code": "300904",
+            "version_name": "30.9.4",
             "app_name": "musical_ly",
             "channel": "googleplay",
             "device_platform": "android",
             "device_type": "SM-G991B",
+            "device_brand": "samsung",
             "os_version": "12",
-            "aid": "1180",
+            "resolution": "1080*2400",
+            "dpi": "420",
+            "ssmix": "a",
+            "aid": "1233",
         }
+        headers = {"User-Agent": ANDROID, "Accept": "application/json"}
+        answers = []
 
-        async with session.get(
-            FEED, params=params, headers={"User-Agent": ANDROID}
-        ) as response:
-            response.raise_for_status()
-            payload = await response.json(content_type=None)
+        for host in HOSTS:
+            async with session.get(
+                f"https://{host}/aweme/v1/feed/",
+                params=params,
+                headers=headers,
+                proxy=self._proxy,
+            ) as response:
+                if response.status != 200:
+                    answers.append(str(response.status))
+                    continue
 
-        items = (payload or {}).get("aweme_list") or []
+                payload = await response.json(content_type=None)
 
-        if not items or str(items[0].get("aweme_id")) != params["aweme_id"]:
-            return None
+            items = (payload or {}).get("aweme_list") or []
 
-        return self._read_tiktok(items[0])
+            if items and str(items[0].get("aweme_id")) == aweme:
+                return self._read_tiktok(items[0])
+
+            answers.append(self.strings["reason_empty"])
+
+        return self.strings["reason_hosts"].format(
+            utils.escape_html(", ".join(dict.fromkeys(answers)))
+        )
 
     def _read_tiktok(self, item: dict) -> dict:
         """Разложить ответ TikTok по своим полочкам."""
@@ -348,17 +410,36 @@ class ТиктокМод(loader.Module):
         }
 
     async def _via_tikwm(self, session, link: str):
-        """Сторонний сервис: работает стабильнее, но видит твою ссылку."""
-        params = {"url": link, "hd": "1" if self.config["hd"] else "0"}
+        """Сторонний сервис: работает стабильнее, но видит твою ссылку.
 
-        async with session.get(
-            TIKWM, params=params, headers={"User-Agent": BROWSER}
+        Ходим POST-ом и с полным набором заголовков браузера: на голый GET
+        сервис отвечает 403.
+        """
+        headers = {
+            "User-Agent": BROWSER,
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": "https://www.tikwm.com/",
+            "Origin": "https://www.tikwm.com",
+        }
+        form = {"url": link, "hd": "1" if self.config["hd"] else "0"}
+
+        async with session.post(
+            TIKWM, data=form, headers=headers, proxy=self._proxy
         ) as response:
-            response.raise_for_status()
+            if response.status != 200:
+                return self._reason_http(response.status, await self._peek(response))
+
             payload = await response.json(content_type=None)
 
-        if not payload or payload.get("code") != 0:
+        if not payload:
             return None
+
+        if payload.get("code") != 0:
+            # Тут же прилетает и «Free Api Limit» — покажем как есть
+            return self.strings["reason_said"].format(
+                utils.escape_html(str(payload.get("msg") or "")[:80])
+            )
 
         return self._read_tikwm(payload.get("data") or {})
 
@@ -392,7 +473,10 @@ class ТиктокМод(loader.Module):
             return link
 
         async with session.get(
-            link, headers={"User-Agent": BROWSER}, allow_redirects=True
+            link,
+            headers={"User-Agent": BROWSER},
+            allow_redirects=True,
+            proxy=self._proxy,
         ) as response:
             return str(response.url)
 
@@ -474,7 +558,7 @@ class ТиктокМод(loader.Module):
         """Скачать в память. int — сколько весит то, что не влезло."""
         headers = {"User-Agent": ANDROID, "Referer": "https://www.tiktok.com/"}
 
-        async with session.get(url, headers=headers) as response:
+        async with session.get(url, headers=headers, proxy=self._proxy) as response:
             response.raise_for_status()
             promised = int(response.headers.get("Content-Length") or 0)
 
@@ -568,7 +652,13 @@ class ТиктокМод(loader.Module):
             for index, (name, reason) in enumerate(troubles)
         ]
 
-        return self.strings["failed"].format("\n".join(lines), self._prefix)
+        # Про прокси говорим один раз внизу, а не в каждой строке
+        blocked = any(mark in reason for _, reason in troubles for mark in ("403", "429"))
+        foot = self.strings["foot_blocked" if blocked else "foot_order"]
+
+        return self.strings["failed"].format(
+            "\n".join(lines), foot.format(self._prefix)
+        )
 
     # ------------------------------------------------------------------ #
     #  Мелочи
@@ -589,6 +679,28 @@ class ТиктокМод(loader.Module):
                 return found.group(0)
 
         return None
+
+    @property
+    def _proxy(self):
+        return (self.config["proxy"] or "").strip() or None
+
+    def _reason_http(self, status: int, peek: str) -> str:
+        if peek and status not in {403, 429}:
+            return self.strings["reason_http_body"].format(status, peek)
+
+        return self.strings["reason_http"].format(status)
+
+    @staticmethod
+    async def _peek(response) -> str:
+        """Кусочек ответа — по нему видно, кто именно отказал."""
+        try:
+            body = await response.text()
+        except Exception:
+            return ""
+
+        clean = re.sub(r"<[^>]+>", " ", body or "")
+
+        return utils.escape_html(" ".join(clean.split())[:90])
 
     @staticmethod
     def _first(items):
