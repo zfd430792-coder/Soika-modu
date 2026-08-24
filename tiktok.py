@@ -9,11 +9,16 @@
 # meta description: .tt <ссылка> — видео из TikTok без водяного знака, с автором и описанием
 # requires: aiohttp
 
+import asyncio
 import io
+import json
 import logging
+import os
 import random
 import re
+import shutil
 import struct
+import tempfile
 
 import aiohttp
 from telethon.tl import types
@@ -74,12 +79,49 @@ class ТиктокМод(loader.Module):
         "working": "⏳ <b>Тащу видео…</b>",
         "failed": "⚠️ <b>Не вышло достать видео</b>\n\n{}\n\n{}",
         "foot_order": (
-            "<i>Если это повторяется, поменяй порядок источников в</i>"
-            " <code>{}cfg</code>"
+            "<i>Повторяется — поменяй порядок источников:</i>"
+            " <code>{}ttcfg</code>"
         ),
         "foot_blocked": (
             "🚧 <b>Похоже, TikTok режет твой сервер</b>\n"
-            "<i>Пропиши прокси:</i> <code>{}cfg</code> <i>→ Тикток → proxy</i>"
+            "<i>Поможет прокси:</i>"
+            " <code>{}ttproxy http://логин:пароль@хост:порт</code>"
+        ),
+        # ── настройки ───────────────────────────────────────────────────
+        "cfg": "⚙️ <b>Настройки Тиктока</b>\n{}\n\n{}",
+        "cfg_note": "<i>Всё меняется кнопками — лазить в</i> <code>{}cfg</code> <i>не нужно.</i>",
+        "cfg_sources": "Источники",
+        "cfg_caption": "Подпись",
+        "cfg_hd": "Качество",
+        "cfg_photos": "Фотопосты",
+        "cfg_send": "Отправка",
+        "cfg_limit": "Лимит веса",
+        "cfg_proxy": "Прокси",
+        "cfg_probe": "Размеры кадра",
+        "cap_full": "полная",
+        "cap_short": "только автор",
+        "cap_none": "без подписи",
+        "hd_on": "получше",
+        "hd_off": "обычное",
+        "send_video": "видео",
+        "send_file": "документом",
+        "photos_on": "присылаю",
+        "photos_off": "пропускаю",
+        "proxy_none": "<i>не задан</i>",
+        "probe_ffmpeg": "ffprobe",
+        "probe_self": "<i>сам разбираю mp4 — ffmpeg не установлен</i>",
+        "proxy_how": (
+            "🌐 <b>Прокси</b>\n\n"
+            "<b>Задать:</b> <code>{0}ttproxy http://логин:пароль@хост:порт</code>\n"
+            "<b>Убрать:</b> <code>{0}ttproxy</code>\n\n"
+            "<i>Только HTTP или HTTPS, SOCKS без отдельной библиотеки не"
+            " работает.</i>"
+        ),
+        "proxy_set": "🌐 <b>Прокси записан</b>\n<code>{}</code>",
+        "proxy_off": "🌐 <b>Прокси убран</b>",
+        "proxy_bad": (
+            "🚫 <b>Прокси должен начинаться с</b> <code>http://</code>"
+            " <b>или</b> <code>https://</code>"
         ),
         "line_failed": "├ <b>{}:</b> {}",
         "line_last": "└ <b>{}:</b> {}",
@@ -94,12 +136,12 @@ class ТиктокМод(loader.Module):
             "🐘 <b>Ролик тяжелее лимита</b>\n\n"
             "├ <b>Весит:</b> {}\n"
             "└ <b>Разрешено:</b> {}\n\n"
-            "<i>Лимит поднимается в</i> <code>{}cfg</code>"
+            "<i>Лимит поднимается кнопкой в</i> <code>{}ttcfg</code>"
         ),
         "no_video": (
             "🚫 <b>В посте нет видео</b>\n\n"
-            "<i>Это фотопост, а показ фотопостов выключен в</i>"
-            " <code>{}cfg</code>"
+            "<i>Это фотопост, а фотопосты выключены в</i>"
+            " <code>{}ttcfg</code>"
         ),
         # ── подпись ─────────────────────────────────────────────────────
         "by": "🎵 <b>{}</b>",
@@ -111,6 +153,17 @@ class ТиктокМод(loader.Module):
         "meta_photos": "└ 🖼 {} · {} · <i>{}</i>",
         "photos_count": "{} фото",
         # ── единицы ─────────────────────────────────────────────────────
+        "btn_order": "🔀 Сперва {}",
+        "btn_caption": "📝 {}",
+        "btn_hd": "💎 HD: {}",
+        "btn_photos": "🖼 Фото: {}",
+        "btn_doc": "📄 {}",
+        "btn_limit": "🐘 {} МБ",
+        "btn_proxy": "🌐 Прокси",
+        "btn_settings": "⚙️ Настройки",
+        "btn_close": "✖️ Закрыть",
+        "on": "вкл",
+        "off": "выкл",
         "u_k": "{} тыс.",
         "u_m": "{} млн",
     }
@@ -129,12 +182,47 @@ class ТиктокМод(loader.Module):
         "working": "⏳ <b>Fetching the video…</b>",
         "failed": "⚠️ <b>Could not get the video</b>\n\n{}\n\n{}",
         "foot_order": (
-            "<i>If this keeps happening, reorder the sources in</i>"
-            " <code>{}cfg</code>"
+            "<i>Keeps happening — reorder the sources:</i>"
+            " <code>{}ttcfg</code>"
         ),
         "foot_blocked": (
             "🚧 <b>Looks like TikTok is throttling your server</b>\n"
-            "<i>Set a proxy:</i> <code>{}cfg</code> <i>→ TikTok → proxy</i>"
+            "<i>A proxy helps:</i>"
+            " <code>{}ttproxy http://user:pass@host:port</code>"
+        ),
+        "cfg": "⚙️ <b>TikTok settings</b>\n{}\n\n{}",
+        "cfg_note": "<i>All of it is buttons — no need to dig into</i> <code>{}cfg</code>.",
+        "cfg_sources": "Sources",
+        "cfg_caption": "Caption",
+        "cfg_hd": "Quality",
+        "cfg_photos": "Photo posts",
+        "cfg_send": "Sent as",
+        "cfg_limit": "Size limit",
+        "cfg_proxy": "Proxy",
+        "cfg_probe": "Frame size from",
+        "cap_full": "full",
+        "cap_short": "author only",
+        "cap_none": "no caption",
+        "hd_on": "better",
+        "hd_off": "normal",
+        "send_video": "video",
+        "send_file": "document",
+        "photos_on": "sent",
+        "photos_off": "skipped",
+        "proxy_none": "<i>not set</i>",
+        "probe_ffmpeg": "ffprobe",
+        "probe_self": "<i>parsing mp4 myself — ffmpeg is not installed</i>",
+        "proxy_how": (
+            "🌐 <b>Proxy</b>\n\n"
+            "<b>Set:</b> <code>{0}ttproxy http://user:pass@host:port</code>\n"
+            "<b>Clear:</b> <code>{0}ttproxy</code>\n\n"
+            "<i>HTTP or HTTPS only, SOCKS needs a separate library.</i>"
+        ),
+        "proxy_set": "🌐 <b>Proxy saved</b>\n<code>{}</code>",
+        "proxy_off": "🌐 <b>Proxy cleared</b>",
+        "proxy_bad": (
+            "🚫 <b>A proxy must start with</b> <code>http://</code>"
+            " <b>or</b> <code>https://</code>"
         ),
         "line_failed": "├ <b>{}:</b> {}",
         "line_last": "└ <b>{}:</b> {}",
@@ -149,12 +237,12 @@ class ТиктокМод(loader.Module):
             "🐘 <b>The clip is over the limit</b>\n\n"
             "├ <b>Weighs:</b> {}\n"
             "└ <b>Allowed:</b> {}\n\n"
-            "<i>Raise the limit in</i> <code>{}cfg</code>"
+            "<i>Raise the limit with a button in</i> <code>{}ttcfg</code>"
         ),
         "no_video": (
             "🚫 <b>No video in this post</b>\n\n"
             "<i>It is a photo post, and photo posts are off in</i>"
-            " <code>{}cfg</code>"
+            " <code>{}ttcfg</code>"
         ),
         "by": "🎵 <b>{}</b>",
         "by_nick": "🎵 <b>{}</b> · <code>@{}</code>",
@@ -164,6 +252,17 @@ class ТиктокМод(loader.Module):
         "meta": "└ ⏱ {} · {} · <i>{}</i>",
         "meta_photos": "└ 🖼 {} · {} · <i>{}</i>",
         "photos_count": "{} photos",
+        "btn_order": "🔀 {} first",
+        "btn_caption": "📝 {}",
+        "btn_hd": "💎 HD: {}",
+        "btn_photos": "🖼 Photos: {}",
+        "btn_doc": "📄 {}",
+        "btn_limit": "🐘 {} MB",
+        "btn_proxy": "🌐 Proxy",
+        "btn_settings": "⚙️ Settings",
+        "btn_close": "✖️ Close",
+        "on": "on",
+        "off": "off",
         "u_k": "{}K",
         "u_m": "{}M",
     }
@@ -251,17 +350,13 @@ class ТиктокМод(loader.Module):
         async with aiohttp.ClientSession(timeout=timeout) as session:
             post = await self._fetch(session, link, troubles)
 
-            if post is None:
-                await utils.answer(sent, self._trouble_card(troubles))
-                return
-
-            if not post.get("video") and not post.get("images"):
-                await utils.answer(sent, self._trouble_card(troubles))
+            if post is None or not (post.get("video") or post.get("images")):
+                await self._sorry(sent, self._trouble_card(troubles))
                 return
 
             if not post.get("video"):
                 if not self.config["photos"]:
-                    await utils.answer(sent, self.strings["no_video"].format(self._prefix))
+                    await self._sorry(sent, self.strings["no_video"].format(self._prefix))
                     return
 
                 await self._send_photos(session, sent, post)
@@ -269,17 +364,166 @@ class ТиктокМод(loader.Module):
 
             await self._send_video(session, sent, post)
 
+    @loader.command(aliases=["ттнастройки"])
+    async def ttcfgcmd(self, message):
+        """— настройки модуля кнопками"""
+        await self._menu(message)
+
+    @loader.owner
+    @loader.command(aliases=["ттпрокси"])
+    async def ttproxycmd(self, message):
+        """[адрес] — прописать прокси; без адреса — убрать"""
+        value = (utils.get_args_raw(message) or "").strip()
+
+        if not value:
+            self.config["proxy"] = ""
+            await utils.answer(message, self.strings["proxy_off"])
+            return
+
+        if not value.lower().startswith(("http://", "https://")):
+            await utils.answer(message, self.strings["proxy_bad"])
+            return
+
+        self.config["proxy"] = value
+        await utils.answer(message, self.strings["proxy_set"].format(self._masked()))
+
+    # ------------------------------------------------------------------ #
+    #  Меню настроек
+    # ------------------------------------------------------------------ #
+    def _settings(self) -> str:
+        rows = [
+            (self.strings["cfg_sources"], " → ".join(self._order())),
+            (self.strings["cfg_caption"], self.strings[f"cap_{self.config['caption']}"]),
+            (self.strings["cfg_hd"], self.strings["hd_on" if self.config["hd"] else "hd_off"]),
+            (
+                self.strings["cfg_photos"],
+                self.strings["photos_on" if self.config["photos"] else "photos_off"],
+            ),
+            (
+                self.strings["cfg_send"],
+                self.strings["send_file" if self.config["as_file"] else "send_video"],
+            ),
+            (self.strings["cfg_limit"], f"{self.config['max_mb']} МБ"),
+            (self.strings["cfg_proxy"], self._masked()),
+            (
+                self.strings["cfg_probe"],
+                self.strings["probe_ffmpeg"]
+                if shutil.which("ffprobe")
+                else self.strings["probe_self"],
+            ),
+        ]
+        lines = [
+            f"{'└' if index == len(rows) - 1 else '├'} <b>{label}:</b> {value}"
+            for index, (label, value) in enumerate(rows)
+        ]
+
+        return self.strings["cfg"].format(
+            "\n".join(lines), self.strings["cfg_note"].format(self._prefix)
+        )
+
+    def _settings_markup(self) -> list:
+        return [
+            [
+                {
+                    "text": self.strings["btn_order"].format(self._order()[0]),
+                    "callback": self._flip_order,
+                },
+                {
+                    "text": self.strings["btn_caption"].format(
+                        self.strings[f"cap_{self.config['caption']}"]
+                    ),
+                    "callback": self._flip_caption,
+                },
+            ],
+            [
+                {
+                    "text": self.strings["btn_hd"].format(self._onoff("hd")),
+                    "callback": self._flip,
+                    "args": ("hd",),
+                },
+                {
+                    "text": self.strings["btn_photos"].format(self._onoff("photos")),
+                    "callback": self._flip,
+                    "args": ("photos",),
+                },
+            ],
+            [
+                {
+                    "text": self.strings["btn_doc"].format(
+                        self.strings["send_file" if self.config["as_file"] else "send_video"]
+                    ),
+                    "callback": self._flip,
+                    "args": ("as_file",),
+                },
+                {
+                    "text": self.strings["btn_limit"].format(self.config["max_mb"]),
+                    "callback": self._next_limit,
+                },
+            ],
+            [
+                {"text": self.strings["btn_proxy"], "callback": self._proxy_how},
+                {"text": self.strings["btn_close"], "callback": self._close},
+            ],
+        ]
+
+    async def _menu(self, message):
+        if self.inline is not None and self.inline.init_complete:
+            if await self.inline.form(
+                self._settings(), message=message, reply_markup=self._settings_markup()
+            ):
+                return
+
+        await utils.answer(message, self._settings())
+
+    async def _redraw(self, call):
+        await call.edit(self._settings(), reply_markup=self._settings_markup())
+
+    async def _flip(self, call, key: str):
+        self.config[key] = not self.config[key]
+        await call.answer(self._onoff(key))
+        await self._redraw(call)
+
+    async def _flip_order(self, call):
+        self.config["sources"] = list(reversed(self._order()))
+        # Иначе запомненный удачный источник перебьёт только что выбранный
+        self.set("lucky", None)
+        await call.answer(self._order()[0])
+        await self._redraw(call)
+
+    async def _flip_caption(self, call):
+        order = ["full", "short", "none"]
+        now = self.config["caption"]
+        self.config["caption"] = order[(order.index(now) + 1) % len(order)] if now in order else "full"
+        await call.answer(self.strings[f"cap_{self.config['caption']}"])
+        await self._redraw(call)
+
+    async def _next_limit(self, call):
+        steps = [20, 50, 100, 200, 500, 2000]
+        now = self.config["max_mb"]
+        following = next((step for step in steps if step > now), steps[0])
+        self.config["max_mb"] = following
+        await call.answer(str(following))
+        await self._redraw(call)
+
+    async def _proxy_how(self, call):
+        # Всплывашка показывает голый текст — разметку убираем
+        await call.answer(
+            re.sub(r"<[^>]+>", "", self.strings["proxy_how"].format(self._prefix)),
+            show_alert=True,
+        )
+
+    async def _menu_now(self, call):
+        await self._redraw(call)
+
+    async def _close(self, call):
+        await call.delete()
+
     # ------------------------------------------------------------------ #
     #  Добыча
     # ------------------------------------------------------------------ #
     async def _fetch(self, session, link: str, troubles: list):
         """Обойти источники по порядку; удачный запомнить на будущее."""
-        order = [
-            name
-            for name in (self.config["sources"] or ["tiktok", "tikwm"])
-            if name in {"tiktok", "tikwm"}
-        ] or ["tiktok", "tikwm"]
-
+        order = self._order()
         lucky = self.get("lucky")
 
         if lucky in order:
@@ -488,7 +732,7 @@ class ТиктокМод(loader.Module):
         data = await self._pull(session, post["video"], limit)
 
         if isinstance(data, int):
-            await utils.answer(
+            await self._sorry(
                 sent,
                 self.strings["too_big"].format(
                     self._weight(data), self._weight(limit), self._prefix
@@ -497,10 +741,12 @@ class ТиктокМод(loader.Module):
             return
 
         if data is None:
-            await utils.answer(sent, self._trouble_card([(post["source"], self.strings["reason_empty"])]))
+            await self._sorry(
+                sent, self._trouble_card([(post["source"], self.strings["reason_empty"])])
+            )
             return
 
-        width, height, seconds = self._measure(data)
+        width, height, seconds = await self._measure(data)
         buffer = io.BytesIO(data)
         buffer.name = "tiktok.mp4"
 
@@ -539,7 +785,9 @@ class ТиктокМод(loader.Module):
             album.append(picture)
 
         if not album:
-            await utils.answer(sent, self._trouble_card([(post["source"], self.strings["reason_empty"])]))
+            await self._sorry(
+                sent, self._trouble_card([(post["source"], self.strings["reason_empty"])])
+            )
             return
 
         await self.client.send_file(
@@ -680,6 +928,48 @@ class ТиктокМод(loader.Module):
 
         return None
 
+    async def _sorry(self, sent, text: str) -> None:
+        """Отказ с кнопкой настроек — чтобы чинить, не выходя из чата."""
+        if self.inline is not None and self.inline.init_complete:
+            if await self.inline.form(
+                text,
+                message=sent,
+                reply_markup=[
+                    [
+                        {"text": self.strings["btn_settings"], "callback": self._menu_now},
+                        {"text": self.strings["btn_close"], "callback": self._close},
+                    ]
+                ],
+            ):
+                return
+
+        await utils.answer(sent, text)
+
+    def _order(self) -> list:
+        known = [
+            name
+            for name in (self.config["sources"] or [])
+            if name in {"tiktok", "tikwm"}
+        ]
+
+        for name in ("tiktok", "tikwm"):
+            if name not in known:
+                known.append(name)
+
+        return known
+
+    def _onoff(self, key: str) -> str:
+        return self.strings["on" if self.config[key] else "off"]
+
+    def _masked(self) -> str:
+        """Прокси для показа: пароль наружу не светим."""
+        value = self._proxy
+
+        if not value:
+            return self.strings["proxy_none"]
+
+        return utils.escape_html(re.sub(r"://([^:@/]+):[^@/]*@", r"://\1:***@", value))
+
     @property
     def _proxy(self):
         return (self.config["proxy"] or "").strip() or None
@@ -718,19 +1008,72 @@ class ТиктокМод(loader.Module):
 
         return url if url.startswith("http") else f"https://www.tikwm.com{url}"
 
-    @staticmethod
-    def _measure(data: bytes):
-        """Ширина, высота и длительность прямо из mp4.
+    async def _measure(self, data: bytes):
+        """Ширина, высота и длительность ролика.
 
-        Без них телетон ставит видео w=1, h=1 — клиент считает кадр
-        квадратным и растягивает картинку. Читаем заголовок сами, чтобы
-        не зависеть ни от сервиса, ни от hachoir.
+        Сначала спрашиваем ffprobe — он знает про повороты и любые
+        контейнеры. Нет его в системе — читаем заголовок mp4 сами: без
+        размеров телетон ставит видео w=1, h=1, и клиент растягивает кадр.
         """
+        measured = await self._via_ffprobe(data)
+
+        if measured:
+            return measured
+
         try:
             return _mp4(data)
         except Exception:
             logger.info("Заголовок mp4 не разобрался")
             return 0, 0, 0
+
+    async def _via_ffprobe(self, data: bytes):
+        """Размеры от ffprobe, если он установлен. None — если нет."""
+        binary = shutil.which("ffprobe")
+
+        if not binary:
+            return None
+
+        handle, name = tempfile.mkstemp(suffix=".mp4")
+
+        try:
+            with os.fdopen(handle, "wb") as raw:
+                raw.write(data)
+
+            process = await asyncio.create_subprocess_exec(
+                binary,
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height,duration:stream_side_data=rotation",
+                "-of", "json",
+                name,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            out, _ = await asyncio.wait_for(process.communicate(), timeout=30)
+            streams = (json.loads(out or b"{}").get("streams") or [None])[0]
+
+            if not streams:
+                return None
+
+            width = int(streams.get("width") or 0)
+            height = int(streams.get("height") or 0)
+            seconds = round(float(streams.get("duration") or 0))
+
+            # Повёрнутый ролик ffprobe отдаёт в исходной ориентации,
+            # а показывать его надо боком — меняем стороны местами
+            for side in streams.get("side_data_list") or []:
+                if abs(int(side.get("rotation") or 0)) % 180 == 90:
+                    width, height = height, width
+
+            return (width, height, seconds) if width and height else None
+        except Exception:
+            logger.info("ffprobe не справился, читаю заголовок сам")
+            return None
+        finally:
+            try:
+                os.unlink(name)
+            except OSError:
+                pass
 
     def _count(self, number) -> str:
         number = int(number or 0)
@@ -844,5 +1187,18 @@ def _tkhd(body: bytes):
         return 0, 0
 
     width, height = struct.unpack(">II", head[-8:])
+    width, height = width >> 16, height >> 16
 
-    return width >> 16, height >> 16
+    # Перед размерами лежит матрица показа. Если ролик снят боком, стороны
+    # в ней переставлены местами — иначе вертикальное видео уедет в ширину.
+    if len(head) >= 44 and _turned(head[-44:-8]):
+        width, height = height, width
+
+    return width, height
+
+
+def _turned(matrix: bytes) -> bool:
+    """Повёрнут ли кадр на четверть оборота."""
+    a, b, _, c, d = struct.unpack(">iiiii", matrix[:20])
+
+    return not a and not d and bool(b) and bool(c)
