@@ -15,6 +15,7 @@
 | [`counter.py`](counter.py) | `.count`, `.counts`, `.delcount` | образец: база, кнопки, конфиг |
 | [`username.py`](username.py) | `.uz`, `.uzadd`, `.uzdel`, `.uzlist` | ждёт, когда освободится чужой юзернейм, и занимает его каналом |
 | [`saver.py`](saver.py) | `.saver`, `.savermake`, `.saverclean`, `.saverignore` | складывает одноразовые медиа и удалённые сообщения в личные каналы |
+| [`tiktok.py`](tiktok.py) | `.tt` | видео из TikTok без водяного знака, с автором и описанием |
 
 ---
 
