@@ -144,9 +144,6 @@ class ИИМод(loader.Module):
         "lbl_heat": "Разброс",
         "lbl_length": "Длина ответа",
         "lbl_reply": "Контекст из реплая",
-        "lbl_think": "Размышления",
-        "think_yes": "показываю",
-        "think_no": "прячу",
         "key_yes": "записан",
         "key_no": "<i>нет</i>",
         "role_no": "<i>не задан</i>",
@@ -171,7 +168,6 @@ class ИИМод(loader.Module):
             " <code>{}aimodels</code>"
         ),
         "no_answer": "🤷 <b>Модель ответила пустотой</b>",
-        "thought": "💭 <i>{}</i>\n\n➖➖➖\n",
         "all_think": (
             "💭 <b>Модель ушла в размышления и не успела ответить</b>\n\n"
             "├ Подними длину ответа: <code>{0}aicfg</code> → 📏\n"
@@ -186,7 +182,6 @@ class ИИМод(loader.Module):
         "btn_length": "📏 Длина: {}",
         "btn_reply": "↩️ Реплай: {}",
         "btn_sign": "🏷 Подпись: {}",
-        "btn_think": "💭 Мысли: {}",
         "btn_back": "⬅️ Назад",
         "btn_close": "✖️ Закрыть",
         "on": "вкл",
@@ -241,9 +236,6 @@ class ИИМод(loader.Module):
         "lbl_heat": "Spread",
         "lbl_length": "Answer length",
         "lbl_reply": "Context from reply",
-        "lbl_think": "Reasoning",
-        "think_yes": "shown",
-        "think_no": "hidden",
         "key_yes": "saved",
         "key_no": "<i>none</i>",
         "role_no": "<i>none</i>",
@@ -267,7 +259,6 @@ class ИИМод(loader.Module):
             " <code>{}aimodels</code>"
         ),
         "no_answer": "🤷 <b>The model answered with nothing</b>",
-        "thought": "💭 <i>{}</i>\n\n➖➖➖\n",
         "all_think": (
             "💭 <b>The model spent everything on thinking and never answered</b>\n\n"
             "├ Raise the answer length: <code>{0}aicfg</code> → 📏\n"
@@ -281,7 +272,6 @@ class ИИМод(loader.Module):
         "btn_length": "📏 Length: {}",
         "btn_reply": "↩️ Reply: {}",
         "btn_sign": "🏷 Caption: {}",
-        "btn_think": "💭 Reasoning: {}",
         "btn_back": "⬅️ Back",
         "btn_close": "✖️ Close",
         "on": "on",
@@ -337,15 +327,6 @@ class ИИМод(loader.Module):
             validator=loader.validators.Boolean(),
         ),
         loader.ConfigValue(
-            "think",
-            False,
-            (
-                "Показывать ход мыслей рассуждающих моделей (Qwen, DeepSeek)."
-                " Обычно это простыня, которую незачем читать"
-            ),
-            validator=loader.validators.Boolean(),
-        ),
-        loader.ConfigValue(
             "timeout",
             120,
             "Сколько секунд ждать ответа",
@@ -380,21 +361,13 @@ class ИИМод(loader.Module):
             await utils.answer(sent, answer)
             return
 
-        body, thought = self._split_think(answer["text"])
-        thought = thought or answer.get("reasoning") or ""
+        body, _ = self._split_think(answer["text"])
 
-        if not body and not (self.config["think"] and thought):
+        if not body:
             await utils.answer(sent, self.strings["all_think"].format(self._prefix))
             return
 
-        shown = self._to_html(body)
-
-        if self.config["think"] and thought:
-            shown = self.strings["thought"].format(
-                self._to_html(self._cut(thought, 900))
-            ) + shown
-
-        body = shown
+        body = self._to_html(body)
         spent = ""
 
         if self.config["sign"]:
@@ -497,6 +470,9 @@ class ИИМод(loader.Module):
             "temperature": float(self.config["heat"]),
             "max_tokens": int(self.config["length"]),
             "stream": False,
+            # Рассуждающие модели прячут ход мыслей на своей стороне —
+            # так он не съедает ответ и не приходит в чат
+            "reasoning_format": "hidden",
         }
         answer = await self._call("POST", "/chat/completions", payload)
 
@@ -515,7 +491,6 @@ class ИИМод(loader.Module):
 
         return {
             "text": text.strip(),
-            "reasoning": reasoning.strip(),
             "tokens": (answer.get("usage") or {}).get("total_tokens") or 0,
         }
 
@@ -554,47 +529,72 @@ class ИИМод(loader.Module):
 
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.request(
-                    method, f"{BASE}{path}", json=payload, headers=headers
-                ) as response:
-                    if response.status == 200:
-                        return await response.json(content_type=None)
+                for attempt in (1, 2):
+                    async with session.request(
+                        method, f"{BASE}{path}", json=payload, headers=headers
+                    ) as response:
+                        if response.status == 200:
+                            return await response.json(content_type=None)
 
-                    return await self._trouble(response)
+                        note = await self._note(response)
+
+                    # Модели без размышлений про этот ключ не знают: убираем
+                    # его и повторяем, чтобы не терять ответ из-за мелочи
+                    if (
+                        attempt == 1
+                        and note["status"] == 400
+                        and payload
+                        and payload.pop("reasoning_format", None)
+                    ):
+                        continue
+
+                    return self._trouble(note)
         except (aiohttp.ServerTimeoutError, TimeoutError):
             return self.strings["timeout"]
         except Exception:
             logger.exception("Groq не ответил")
             return self.strings["broke"].format("—", "нет связи")
 
-    async def _trouble(self, response) -> str:
-        """Понятный текст вместо голого кода ответа."""
+    @staticmethod
+    async def _note(response) -> dict:
+        """Собрать то, что Groq сказал об отказе."""
+        message = code = ""
+
         try:
             body = await response.json(content_type=None)
-            note = ((body or {}).get("error") or {}).get("message") or ""
-            code = ((body or {}).get("error") or {}).get("code") or ""
+            trouble = (body or {}).get("error") or {}
+            message = str(trouble.get("message") or "")
+            code = str(trouble.get("code") or "")
         except Exception:
-            note, code = "", ""
+            logger.info("Groq отказал без внятного тела")
 
-        if response.status == 401:
+        return {
+            "status": response.status,
+            "message": message,
+            "code": code,
+            "wait": response.headers.get("retry-after") or "?",
+        }
+
+    def _trouble(self, note: dict) -> str:
+        """Понятный текст вместо голого кода ответа."""
+        if note["status"] == 401:
             return self.strings["bad_key"].format(KEYS)
 
-        if response.status == 404 or "model" in str(code):
+        if note["status"] == 404 or "model" in note["code"]:
             return self.strings["no_model"].format(
                 utils.escape_html(self.config["model"]), self._prefix
             )
 
-        if response.status == 429:
-            wait = response.headers.get("retry-after") or "?"
+        if note["status"] == 429:
             return self.strings["too_often"].format(
-                self.strings["seconds"].format(wait)
+                self.strings["seconds"].format(note["wait"])
             )
 
-        if response.status == 413 or "context" in str(code) or "length" in str(code):
+        if note["status"] == 413 or "context" in note["code"] or "length" in note["code"]:
             return self.strings["too_long"].format(self._prefix)
 
         return self.strings["broke"].format(
-            response.status, utils.escape_html(note[:150] or "—")
+            note["status"], utils.escape_html(note["message"][:150] or "—")
         )
 
     # ------------------------------------------------------------------ #
@@ -671,10 +671,6 @@ class ИИМод(loader.Module):
             body = body[: hanging.start()]
 
         return body.strip(), "\n\n".join(part for part in thoughts if part).strip()
-
-    @staticmethod
-    def _cut(text: str, limit: int) -> str:
-        return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
     def _to_html(self, text: str) -> str:
         """Markdown от модели в HTML, который Telegram понимает."""
@@ -792,10 +788,6 @@ class ИИМод(loader.Module):
                 self.strings["lbl_reply"],
                 self.strings["reply_yes" if self.config["use_reply"] else "reply_no"],
             ),
-            (
-                self.strings["lbl_think"],
-                self.strings["think_yes" if self.config["think"] else "think_no"],
-            ),
         ]
         lines = []
 
@@ -852,16 +844,7 @@ class ИИМод(loader.Module):
                     "args": ("sign",),
                 },
             ],
-            [
-                {
-                    "text": self.strings["btn_think"].format(
-                        self.strings["on" if self.config["think"] else "off"]
-                    ),
-                    "callback": self._toggle,
-                    "args": ("think",),
-                },
-                {"text": self.strings["btn_close"], "callback": self._close},
-            ],
+            [{"text": self.strings["btn_close"], "callback": self._close}],
         ]
 
     # ------------------------------------------------------------------ #
