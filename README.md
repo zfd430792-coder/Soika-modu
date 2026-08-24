@@ -16,6 +16,7 @@
 | [`username.py`](username.py) | `.uz`, `.uzadd`, `.uztake`, `.uzdel`, `.uzlist` | ждёт, когда освободится чужой юзернейм, и занимает его каналом |
 | [`saver.py`](saver.py) | `.saver`, `.saverbox`, `.savermake`, `.saverclean`, `.saverignore` | складывает одноразовые медиа и удалённые сообщения в личные каналы |
 | [`tiktok.py`](tiktok.py) | `.tt`, `.ttinfo`, `.ttaudio`, `.ttcfg`, `.ttproxy` | видео из TikTok без водяного знака, с автором и описанием |
+| [`ai.py`](ai.py) | `.ai`, `.aimodels`, `.aikey`, `.airole`, `.aicfg` | вопрос к нейросети через Groq, модель из живого списка |
 
 ---
 
