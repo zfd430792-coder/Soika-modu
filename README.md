@@ -13,9 +13,9 @@
 |---|---|---|
 | [`template.py`](template.py) | `.template` | скелет: скопировал, переименовал, пишешь |
 | [`counter.py`](counter.py) | `.count`, `.counts`, `.delcount` | образец: база, кнопки, конфиг |
-| [`username.py`](username.py) | `.uz`, `.uzadd`, `.uzdel`, `.uzlist` | ждёт, когда освободится чужой юзернейм, и занимает его каналом |
-| [`saver.py`](saver.py) | `.saver`, `.savermake`, `.saverclean`, `.saverignore` | складывает одноразовые медиа и удалённые сообщения в личные каналы |
-| [`tiktok.py`](tiktok.py) | `.tt`, `.ttcfg`, `.ttproxy` | видео из TikTok без водяного знака, с автором и описанием |
+| [`username.py`](username.py) | `.uz`, `.uzadd`, `.uztake`, `.uzdel`, `.uzlist` | ждёт, когда освободится чужой юзернейм, и занимает его каналом |
+| [`saver.py`](saver.py) | `.saver`, `.saverbox`, `.savermake`, `.saverclean`, `.saverignore` | складывает одноразовые медиа и удалённые сообщения в личные каналы |
+| [`tiktok.py`](tiktok.py) | `.tt`, `.ttinfo`, `.ttaudio`, `.ttcfg`, `.ttproxy` | видео из TikTok без водяного знака, с автором и описанием |
 
 ---
 

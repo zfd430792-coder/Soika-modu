@@ -129,6 +129,10 @@ class ЮзернеймыМод(loader.Module):
         "full": "🚧 <b>В очереди уже {} — больше не влезет</b>\n<i>Освободи место или подними лимит в</i> <code>{}cfg</code>",
         "wiped": "🧹 <b>Очередь очищена</b>",
         "checking": "⏳ <b>Проверяю @{}…</b>",
+        "take_busy": (
+            "🔴 <b>@{0}</b> <b>занят — занять сейчас не выйдет</b>\n\n"
+            "<i>Встать в очередь и дождаться:</i> <code>{1}uzadd {0}</code>"
+        ),
         # ── отчёт в созданном чате ──────────────────────────────────────
         "report": "🎉 <b>@{}</b> <b>— наш</b>\n\n{}",
         "report_title": "📊 <b>Хроника ожидания</b>",
@@ -265,6 +269,10 @@ class ЮзернеймыМод(loader.Module):
         "full": "🚧 <b>Queue is full: {}</b>\n<i>Free a slot or raise the limit in</i> <code>{}cfg</code>",
         "wiped": "🧹 <b>Queue cleared</b>",
         "checking": "⏳ <b>Checking @{}…</b>",
+        "take_busy": (
+            "🔴 <b>@{0}</b> <b>is taken — cannot claim it now</b>\n\n"
+            "<i>Queue up and wait:</i> <code>{1}uzadd {0}</code>"
+        ),
         "report": "🎉 <b>@{}</b> <b>is ours</b>\n\n{}",
         "report_title": "📊 <b>The wait</b>",
         "lbl_since": "Queued at",
@@ -396,7 +404,7 @@ class ЮзернеймыМод(loader.Module):
     # ------------------------------------------------------------------ #
     @loader.command(aliases=["юз"])
     async def uzcmd(self, message):
-        """<юзернейм> — кто его держит и когда освободится"""
+        """<юзернейм> — кто держит, когда был в сети и когда юз освободится"""
         username = self._clean(utils.get_args_raw(message))
 
         if not username:
@@ -413,7 +421,7 @@ class ЮзернеймыМод(loader.Module):
     @loader.owner
     @loader.command(aliases=["uzw", "юзадд"])
     async def uzaddcmd(self, message):
-        """<юзернейм> — встать в очередь: как освободится, займём каналом"""
+        """<юзернейм> — встать в очередь: освободится — займём каналом сами"""
         username = self._clean(utils.get_args_raw(message))
 
         if not username:
@@ -443,9 +451,37 @@ class ЮзернеймыМод(loader.Module):
         await self._answer(sent, await self._card(username), username)
 
     @loader.owner
+    @loader.command(aliases=["uzt", "юззанять"])
+    async def uztakecmd(self, message):
+        """<юзернейм> — занять свободный юз прямо сейчас, не вставая в очередь"""
+        username = self._clean(utils.get_args_raw(message))
+
+        if not username:
+            await self._answer(message, self.strings["usage"].format(self._prefix))
+            return
+
+        if not USERNAME.match(username):
+            await utils.answer(message, self.strings["invalid"])
+            return
+
+        sent = await utils.answer(message, self.strings["checking"].format(username))
+        entry = self._blank()
+        await self._tick(username, entry, force_claim=True)
+
+        # В очередь кладём только удачу: ждать нас не просили
+        if entry.get("state") != "done":
+            await utils.answer(
+                sent, self.strings["take_busy"].format(username, self._prefix)
+            )
+            return
+
+        self._queue()[username] = entry
+        await self._answer(sent, await self._card(username), username)
+
+    @loader.owner
     @loader.command(aliases=["юздел"])
     async def uzdelcmd(self, message):
-        """<юзернейм> — убрать юзернейм из очереди"""
+        """<юзернейм> — убрать юзернейм из очереди слежки"""
         username = self._clean(utils.get_args_raw(message))
         queue = self._queue()
 
@@ -461,7 +497,7 @@ class ЮзернеймыМод(loader.Module):
 
     @loader.command(aliases=["uzl", "юзлист"])
     async def uzlistcmd(self, message):
-        """— очередь юзернеймов целиком"""
+        """— вся очередь: за чем слежу и когда что освободится"""
         await self._answer(message, self._menu(), menu=True)
 
     # ------------------------------------------------------------------ #

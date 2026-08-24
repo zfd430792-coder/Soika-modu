@@ -68,8 +68,11 @@ class ТиктокМод(loader.Module):
         "name": "Тикток",
         "usage": (
             "🎬 <b>Скачать из TikTok</b>\n\n"
-            "<code>{0}tt ссылка</code> — прислать видео без водяного знака\n"
-            "<code>{0}tt</code> ответом на сообщение со ссылкой — то же самое"
+            "<code>{0}tt ссылка</code> — видео без водяного знака\n"
+            "<code>{0}ttinfo ссылка</code> — что за ролик, не качая\n"
+            "<code>{0}ttaudio ссылка</code> — только звук\n"
+            "<code>{0}ttcfg</code> — настройки кнопками\n\n"
+            "<i>Вместо ссылки можно ответить на сообщение с ней.</i>"
         ),
         "no_link": (
             "🚫 <b>Ссылки на TikTok тут нет</b>\n\n"
@@ -77,6 +80,14 @@ class ТиктокМод(loader.Module):
             " и полная</i> <code>tiktok.com/@ник/video/…</code>"
         ),
         "working": "⏳ <b>Тащу видео…</b>",
+        "asking": "⏳ <b>Спрашиваю…</b>",
+        "no_music": (
+            "🔇 <b>Звук отдельно не отдаётся</b>\n\n"
+            "<i>Бывает с оригинальным звуком ролика — он не выложен"
+            " отдельной дорожкой.</i>"
+        ),
+        "sound": "🎧 <b>{}</b>",
+        "sound_unknown": "Звук из TikTok",
         "failed": "⚠️ <b>Не вышло достать видео</b>\n\n{}\n\n{}",
         "foot_order": (
             "<i>Повторяется — поменяй порядок источников:</i>"
@@ -171,8 +182,11 @@ class ТиктокМод(loader.Module):
     strings_en = {
         "usage": (
             "🎬 <b>Download from TikTok</b>\n\n"
-            "<code>{0}tt link</code> — send the video without a watermark\n"
-            "<code>{0}tt</code> replying to a message with a link — same thing"
+            "<code>{0}tt link</code> — video without a watermark\n"
+            "<code>{0}ttinfo link</code> — what the clip is, without downloading\n"
+            "<code>{0}ttaudio link</code> — audio only\n"
+            "<code>{0}ttcfg</code> — settings as buttons\n\n"
+            "<i>Instead of a link you can reply to a message with one.</i>"
         ),
         "no_link": (
             "🚫 <b>No TikTok link here</b>\n\n"
@@ -180,6 +194,14 @@ class ТиктокМод(loader.Module):
             " <code>tiktok.com/@name/video/…</code> <i>work</i>"
         ),
         "working": "⏳ <b>Fetching the video…</b>",
+        "asking": "⏳ <b>Asking…</b>",
+        "no_music": (
+            "🔇 <b>No separate audio track</b>\n\n"
+            "<i>Happens with original sound — it is not published as its own"
+            " track.</i>"
+        ),
+        "sound": "🎧 <b>{}</b>",
+        "sound_unknown": "Sound from TikTok",
         "failed": "⚠️ <b>Could not get the video</b>\n\n{}\n\n{}",
         "foot_order": (
             "<i>Keeps happening — reorder the sources:</i>"
@@ -332,15 +354,11 @@ class ТиктокМод(loader.Module):
     # ------------------------------------------------------------------ #
     @loader.command(aliases=["тт", "tiktok"])
     async def ttcmd(self, message):
-        """<ссылка> — видео из TikTok без водяного знака"""
+        """<ссылка> — видео без водяного знака. Можно ответом на сообщение"""
         link = await self._link(message)
 
         if link is None:
-            args = utils.get_args_raw(message)
-            await utils.answer(
-                message,
-                self.strings["no_link"] if args else self.strings["usage"].format(self._prefix),
-            )
+            await self._nudge(message)
             return
 
         sent = await utils.answer(message, self.strings["working"])
@@ -366,13 +384,13 @@ class ТиктокМод(loader.Module):
 
     @loader.command(aliases=["ттнастройки"])
     async def ttcfgcmd(self, message):
-        """— настройки модуля кнопками"""
+        """— настройки: источники, подпись, качество, лимит. Всё кнопками"""
         await self._menu(message)
 
     @loader.owner
     @loader.command(aliases=["ттпрокси"])
     async def ttproxycmd(self, message):
-        """[адрес] — прописать прокси; без адреса — убрать"""
+        """[адрес] — прописать прокси http://логин:пароль@хост:порт; пусто — убрать"""
         value = (utils.get_args_raw(message) or "").strip()
 
         if not value:
@@ -518,6 +536,108 @@ class ТиктокМод(loader.Module):
     async def _close(self, call):
         await call.delete()
 
+    @loader.command(aliases=["ттинфо"])
+    async def ttinfocmd(self, message):
+        """<ссылка> — что за ролик: автор, описание, счётчики. Без скачивания"""
+        link = await self._link(message)
+
+        if link is None:
+            await self._nudge(message)
+            return
+
+        sent = await utils.answer(message, self.strings["asking"])
+        timeout = aiohttp.ClientTimeout(total=self.config["timeout"])
+        troubles = []
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            post = await self._fetch(session, link, troubles)
+
+        if post is None:
+            await self._sorry(sent, self._trouble_card(troubles))
+            return
+
+        await utils.answer(sent, self._caption(post, 0) or self.strings["reason_empty"])
+
+    @loader.command(aliases=["ттзвук"])
+    async def ttaudiocmd(self, message):
+        """<ссылка> — вытащить из ролика только звук"""
+        link = await self._link(message)
+
+        if link is None:
+            await self._nudge(message)
+            return
+
+        sent = await utils.answer(message, self.strings["working"])
+        timeout = aiohttp.ClientTimeout(total=self.config["timeout"])
+        troubles = []
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            post = await self._fetch(session, link, troubles)
+
+            if post is None:
+                await self._sorry(sent, self._trouble_card(troubles))
+                return
+
+            if not post.get("music_url"):
+                await utils.answer(sent, self.strings["no_music"])
+                return
+
+            await self._send_sound(session, sent, post)
+
+    async def _send_sound(self, session, sent, post: dict) -> None:
+        limit = self.config["max_mb"] * 1024 * 1024
+        data = await self._pull(session, post["music_url"], limit)
+
+        if isinstance(data, int):
+            await self._sorry(
+                sent,
+                self.strings["too_big"].format(
+                    self._weight(data), self._weight(limit), self._prefix
+                ),
+            )
+            return
+
+        if data is None:
+            await self._sorry(
+                sent, self._trouble_card([(post["source"], self.strings["reason_empty"])])
+            )
+            return
+
+        title, performer = self._split_music(post)
+        buffer = io.BytesIO(data)
+        buffer.name = "sound.m4a" if ".m4a" in post["music_url"] else "sound.mp3"
+
+        await utils.answer_file(
+            sent,
+            buffer,
+            caption=self.strings["sound"].format(utils.escape_html(title)),
+            attributes=[
+                types.DocumentAttributeAudio(
+                    duration=post.get("duration") or 0,
+                    title=title,
+                    performer=performer,
+                )
+            ],
+        )
+
+    def _split_music(self, post: dict):
+        """Название и исполнитель из строки «Трек — Автор»."""
+        whole = (post.get("music") or "").strip()
+
+        if not whole:
+            return self.strings["sound_unknown"], post.get("author") or "TikTok"
+
+        title, _, performer = whole.partition(" — ")
+
+        return title.strip(), (performer.strip() or post.get("author") or "TikTok")
+
+    async def _nudge(self, message) -> None:
+        args = utils.get_args_raw(message)
+        await utils.answer(
+            message,
+            self.strings["no_link"] if args else self.strings["usage"].format(self._prefix),
+        )
+
     # ------------------------------------------------------------------ #
     #  Добыча
     # ------------------------------------------------------------------ #
@@ -644,6 +764,7 @@ class ТиктокМод(loader.Module):
             "music": " — ".join(
                 part for part in (music.get("title"), music.get("author")) if part
             ),
+            "music_url": self._first((music.get("play_url") or {}).get("url_list")),
             "duration": round((video.get("duration") or 0) / 1000),
             "width": video.get("width") or 0,
             "height": video.get("height") or 0,
@@ -701,7 +822,11 @@ class ТиктокМод(loader.Module):
             "music": " — ".join(
                 part for part in (music.get("title"), music.get("author")) if part
             )
-            or (data.get("music") if isinstance(data.get("music"), str) else ""),
+            or "",
+            "music_url": self._absolute(
+                music.get("play")
+                or (data.get("music") if isinstance(data.get("music"), str) else None)
+            ),
             "duration": data.get("duration") or 0,
             "width": 0,
             "height": 0,

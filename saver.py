@@ -122,6 +122,8 @@ class ХранительМод(loader.Module):
         # ── команды ─────────────────────────────────────────────────────
         "made": "📦 <b>Каналы готовы</b>\n\n├ {}\n└ {}",
         "make_failed": "⚠️ <b>Не вышло завести каналы:</b> <code>{}</code>",
+        "boxes": "📦 <b>Хранилища</b>\n{}",
+        "box_open": "<a href=\"{}\">открыть</a> · <code>{}</code>",
         "clean_none": (
             "🧹 <b>Лишних хранилищ нет</b>\n\n"
             "<i>Каналы на месте, дубликатов не завелось.</i>"
@@ -238,6 +240,8 @@ class ХранительМод(loader.Module):
         ),
         "made": "📦 <b>Channels ready</b>\n\n├ {}\n└ {}",
         "make_failed": "⚠️ <b>Could not create the channels:</b> <code>{}</code>",
+        "boxes": "📦 <b>Storage channels</b>\n{}",
+        "box_open": "<a href=\"{}\">open</a> · <code>{}</code>",
         "clean_none": (
             "🧹 <b>No stray channels</b>\n\n"
             "<i>The boxes are in place, no duplicates around.</i>"
@@ -377,7 +381,7 @@ class ХранительМод(loader.Module):
     # ------------------------------------------------------------------ #
     @loader.command(aliases=["хранитель"])
     async def savercmd(self, message):
-        """— что ловится, куда складывается и сколько поймано"""
+        """— что ловлю, куда складываю и сколько поймано. С переключателями"""
         await self._answer(message, self._menu())
 
     @loader.owner
@@ -408,7 +412,7 @@ class ХранительМод(loader.Module):
     @loader.owner
     @loader.command(aliases=["хранитьне"])
     async def saverignorecmd(self, message):
-        """— перестать следить за этим чатом (или снова начать)"""
+        """— перестать следить за этим чатом; ещё раз — снова следить"""
         chat_id = getattr(message, "chat_id", None)
 
         if not chat_id:
@@ -429,10 +433,27 @@ class ХранительМод(loader.Module):
         self.config_complete()
         await utils.answer(message, answer)
 
+    @loader.command(aliases=["хранилища"])
+    async def saverboxcmd(self, message):
+        """— ссылки на каналы-хранилища: они в архиве, там их легко потерять"""
+        rows = []
+
+        for kind in ("media", "trash"):
+            stored = self.get(f"{kind}_box")
+            link = self._box_link(stored)
+            rows.append((
+                self.strings[f"box_{kind}"],
+                self.strings["box_open"].format(link, stored)
+                if link
+                else self.strings["box_none"],
+            ))
+
+        await utils.answer(message, self.strings["boxes"].format(self._block(rows)))
+
     @loader.owner
     @loader.command(aliases=["хранительчистка"])
     async def savercleancmd(self, message):
-        """[снести] — найти брошенные хранилища и, с подтверждением, удалить"""
+        """[снести] — найти брошенные хранилища; со словом «снести» удалить их"""
         confirmed = utils.get_args_raw(message).strip().lower() in {
             "снести",
             "wipe",
