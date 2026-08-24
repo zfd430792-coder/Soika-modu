@@ -81,6 +81,13 @@ GLUE = (("GPT OSS", "GPT-OSS"), ("Tool Use", "Tool-Use"), ("Moonshot AI", "Moons
 #: Эти модели не для разговора — их не предлагаем как собеседника
 NOT_CHAT = ("whisper", "tts", "guard", "prompt-guard", "embed")
 
+#: Рассуждающие модели (Qwen, DeepSeek и прочие) выкладывают ход мыслей
+#: прямо в ответ. В чате это мусор, поэтому вырезаем.
+THINK = re.compile(r"<(think|thinking|reasoning)>(.*?)</\1\s*>", re.DOTALL | re.IGNORECASE)
+
+#: Тот же тег, но незакрытый: модель не успела додумать в отведённые токены
+THINK_TAIL = re.compile(r"<(think|thinking|reasoning)>.*$", re.DOTALL | re.IGNORECASE)
+
 
 @loader.tds
 class ИИМод(loader.Module):
@@ -137,6 +144,9 @@ class ИИМод(loader.Module):
         "lbl_heat": "Разброс",
         "lbl_length": "Длина ответа",
         "lbl_reply": "Контекст из реплая",
+        "lbl_think": "Размышления",
+        "think_yes": "показываю",
+        "think_no": "прячу",
         "key_yes": "записан",
         "key_no": "<i>нет</i>",
         "role_no": "<i>не задан</i>",
@@ -161,6 +171,12 @@ class ИИМод(loader.Module):
             " <code>{}aimodels</code>"
         ),
         "no_answer": "🤷 <b>Модель ответила пустотой</b>",
+        "thought": "💭 <i>{}</i>\n\n➖➖➖\n",
+        "all_think": (
+            "💭 <b>Модель ушла в размышления и не успела ответить</b>\n\n"
+            "├ Подними длину ответа: <code>{0}aicfg</code> → 📏\n"
+            "└ Или возьми модель без размышлений: <code>{0}aimodels</code>"
+        ),
         "broke": "⚠️ <b>Groq ответил {}</b>\n<code>{}</code>",
         "timeout": "⏳ <b>Groq не ответил вовремя</b>",
         # ── кнопки ──────────────────────────────────────────────────────
@@ -170,6 +186,7 @@ class ИИМод(loader.Module):
         "btn_length": "📏 Длина: {}",
         "btn_reply": "↩️ Реплай: {}",
         "btn_sign": "🏷 Подпись: {}",
+        "btn_think": "💭 Мысли: {}",
         "btn_back": "⬅️ Назад",
         "btn_close": "✖️ Закрыть",
         "on": "вкл",
@@ -224,6 +241,9 @@ class ИИМод(loader.Module):
         "lbl_heat": "Spread",
         "lbl_length": "Answer length",
         "lbl_reply": "Context from reply",
+        "lbl_think": "Reasoning",
+        "think_yes": "shown",
+        "think_no": "hidden",
         "key_yes": "saved",
         "key_no": "<i>none</i>",
         "role_no": "<i>none</i>",
@@ -247,6 +267,12 @@ class ИИМод(loader.Module):
             " <code>{}aimodels</code>"
         ),
         "no_answer": "🤷 <b>The model answered with nothing</b>",
+        "thought": "💭 <i>{}</i>\n\n➖➖➖\n",
+        "all_think": (
+            "💭 <b>The model spent everything on thinking and never answered</b>\n\n"
+            "├ Raise the answer length: <code>{0}aicfg</code> → 📏\n"
+            "└ Or pick a model without reasoning: <code>{0}aimodels</code>"
+        ),
         "broke": "⚠️ <b>Groq answered {}</b>\n<code>{}</code>",
         "timeout": "⏳ <b>Groq did not answer in time</b>",
         "btn_models": "🧠 Models",
@@ -255,6 +281,7 @@ class ИИМод(loader.Module):
         "btn_length": "📏 Length: {}",
         "btn_reply": "↩️ Reply: {}",
         "btn_sign": "🏷 Caption: {}",
+        "btn_think": "💭 Reasoning: {}",
         "btn_back": "⬅️ Back",
         "btn_close": "✖️ Close",
         "on": "on",
@@ -310,6 +337,15 @@ class ИИМод(loader.Module):
             validator=loader.validators.Boolean(),
         ),
         loader.ConfigValue(
+            "think",
+            False,
+            (
+                "Показывать ход мыслей рассуждающих моделей (Qwen, DeepSeek)."
+                " Обычно это простыня, которую незачем читать"
+            ),
+            validator=loader.validators.Boolean(),
+        ),
+        loader.ConfigValue(
             "timeout",
             120,
             "Сколько секунд ждать ответа",
@@ -344,7 +380,21 @@ class ИИМод(loader.Module):
             await utils.answer(sent, answer)
             return
 
-        body = self._to_html(answer["text"])
+        body, thought = self._split_think(answer["text"])
+        thought = thought or answer.get("reasoning") or ""
+
+        if not body and not (self.config["think"] and thought):
+            await utils.answer(sent, self.strings["all_think"].format(self._prefix))
+            return
+
+        shown = self._to_html(body)
+
+        if self.config["think"] and thought:
+            shown = self.strings["thought"].format(
+                self._to_html(self._cut(thought, 900))
+            ) + shown
+
+        body = shown
         spent = ""
 
         if self.config["sign"]:
@@ -454,13 +504,18 @@ class ИИМод(loader.Module):
             return answer
 
         choices = answer.get("choices") or []
-        text = ((choices[0] if choices else {}).get("message") or {}).get("content") or ""
+        spoke = (choices[0] if choices else {}).get("message") or {}
+        text = spoke.get("content") or ""
+        # Groq умеет отдавать размышления отдельным полем — тогда в content
+        # их уже нет, и вырезать нечего
+        reasoning = spoke.get("reasoning") or ""
 
-        if not text.strip():
+        if not text.strip() and not reasoning.strip():
             return self.strings["no_answer"]
 
         return {
             "text": text.strip(),
+            "reasoning": reasoning.strip(),
             "tokens": (answer.get("usage") or {}).get("total_tokens") or 0,
         }
 
@@ -604,6 +659,23 @@ class ИИМод(loader.Module):
     # ------------------------------------------------------------------ #
     #  Ответ модели в разметку Telegram
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _split_think(text: str):
+        """Разделить ответ на сам ответ и ход мыслей."""
+        thoughts = [found.group(2).strip() for found in THINK.finditer(text)]
+        body = THINK.sub("", text)
+        hanging = THINK_TAIL.search(body)
+
+        if hanging:
+            thoughts.append(re.sub(r"^<\w+>", "", hanging.group(0)).strip())
+            body = body[: hanging.start()]
+
+        return body.strip(), "\n\n".join(part for part in thoughts if part).strip()
+
+    @staticmethod
+    def _cut(text: str, limit: int) -> str:
+        return text if len(text) <= limit else text[:limit].rstrip() + "…"
+
     def _to_html(self, text: str) -> str:
         """Markdown от модели в HTML, который Telegram понимает."""
         blocks = []
@@ -720,6 +792,10 @@ class ИИМод(loader.Module):
                 self.strings["lbl_reply"],
                 self.strings["reply_yes" if self.config["use_reply"] else "reply_no"],
             ),
+            (
+                self.strings["lbl_think"],
+                self.strings["think_yes" if self.config["think"] else "think_no"],
+            ),
         ]
         lines = []
 
@@ -776,7 +852,16 @@ class ИИМод(loader.Module):
                     "args": ("sign",),
                 },
             ],
-            [{"text": self.strings["btn_close"], "callback": self._close}],
+            [
+                {
+                    "text": self.strings["btn_think"].format(
+                        self.strings["on" if self.config["think"] else "off"]
+                    ),
+                    "callback": self._toggle,
+                    "args": ("think",),
+                },
+                {"text": self.strings["btn_close"], "callback": self._close},
+            ],
         ]
 
     # ------------------------------------------------------------------ #
