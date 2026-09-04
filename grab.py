@@ -51,6 +51,37 @@ KINDS = (
 AROUND = 9
 
 
+def _filters():
+    """Фильтры Telegram под наш выбор типов: канал отдаёт сразу нужное.
+
+    Собираем через getattr — в разных версиях телетона набор чуть разный,
+    а отсутствие фильтра всего лишь делает обход медленнее.
+    """
+    pairs = {
+        ("photo",): "InputMessagesFilterPhotos",
+        ("video",): "InputMessagesFilterVideo",
+        ("photo", "video"): "InputMessagesFilterPhotoVideo",
+        ("voice",): "InputMessagesFilterVoice",
+        ("round",): "InputMessagesFilterRoundVideo",
+        ("round", "voice"): "InputMessagesFilterRoundVoice",
+        ("audio",): "InputMessagesFilterMusic",
+        ("gif",): "InputMessagesFilterGif",
+        ("document",): "InputMessagesFilterDocument",
+    }
+
+    return {
+        frozenset(kinds): getattr(types, name)()
+        for kinds, name in pairs.items()
+        if getattr(types, name, None)
+    }
+
+
+FILTERS = _filters()
+
+#: Как часто перерисовывать ход обхода
+EVERY = 25
+
+
 @loader.tds
 class ДобычаМод(loader.Module):
     """Медиа из постов с запретом сохранения — в свой канал"""
@@ -59,6 +90,8 @@ class ДобычаМод(loader.Module):
         "name": "Добыча",
         # ── канал-хранилище ─────────────────────────────────────────────
         "box": "📥 Добыча",
+        "box_named": "📥 {}",
+        "about_named": "Медиа канала, забранные Сойкой",
         "about": "Медиа, забранные Сойкой из закрытых постов",
         "hello": (
             "📥 <b>Добыча</b>\n\n"
@@ -76,6 +109,46 @@ class ДобычаМод(loader.Module):
             " <code>t.me/c/1234567890/123</code><i>. Для закрытых каналов"
             " надо быть их участником.</i>"
         ),
+        "all_usage": (
+            "📡 <b>Забрать медиа со всего канала</b>\n\n"
+            "<code>{0}gmall @ник</code>\n"
+            "<code>{0}gmall t.me/c/1234567890</code>\n\n"
+            "<i>Перед стартом спросит, что именно забирать, и заведёт под"
+            " этот канал отдельное зеркало.</i>"
+        ),
+        "ready": (
+            "📡 <b>Обойти «{}»</b>\n\n{}\n\n"
+            "<i>Отметь, что забирать, и жми «Начать». Остановить —</i>"
+            " <code>{}gmstop</code>"
+        ),
+        "lbl_target": "Куда",
+        "lbl_known": "Уже забрано",
+        "mirror_new": "новый канал «{}»",
+        "mirror_old": "«{}» — уже заведён",
+        "walk": (
+            "📡 <b>«{}»</b>\n\n"
+            "├ <b>Просмотрено:</b> {}\n"
+            "├ <b>Забрано:</b> {}\n"
+            "├ <b>Пропущено:</b> {}\n"
+            "└ <b>Идёт:</b> {}\n\n"
+            "<i>Остановить —</i> <code>{}gmstop</code>"
+        ),
+        "walked": (
+            "✅ <b>Обход «{}» закончен</b>\n\n"
+            "├ <b>Просмотрено:</b> {}\n"
+            "├ <b>Забрано:</b> {}\n"
+            "├ <b>Пропущено:</b> {}\n"
+            "├ <b>Заняло:</b> {}\n"
+            "└ <b>Куда:</b> {}"
+        ),
+        "halted": "⏹ <b>Обход «{}» остановлен</b>\n\n{}",
+        "busy": (
+            "⏳ <b>Один обход уже идёт</b>\n\n"
+            "<i>Дождись его или останови:</i> <code>{}gmstop</code>"
+        ),
+        "idle": "🤷 <b>Сейчас ничего не обходится</b>",
+        "halting": "⏹ <b>Останавливаю…</b>",
+        "waiting": "⏳ <b>Пауза {}</b> — так просит Telegram",
         "no_link": (
             "🚫 <b>Ссылки на пост тут нет</b>\n\n"
             "<i>Нужна ссылка вида</i> <code>t.me/ник/123</code>"
@@ -173,6 +246,8 @@ class ДобычаМод(loader.Module):
         "btn_album": "🖼 Альбомы: {}",
         "btn_caption": "📝 Подпись: {}",
         "btn_box": "↗️ Хранилище",
+        "btn_all": "📡 Парсить канал",
+        "btn_go": "▶️ Начать",
         "btn_kinds": "🎞 Что качать",
         "btn_memory": "🧠 Память: {}",
         "btn_forget": "🧹 Забыть ({})",
@@ -188,6 +263,8 @@ class ДобычаМод(loader.Module):
 
     strings_en = {
         "box": "📥 Hauled",
+        "box_named": "📥 {}",
+        "about_named": "Channel media hauled by Soika",
         "about": "Media Soika hauled out of restricted posts",
         "hello": (
             "📥 <b>Hauled</b>\n\n"
@@ -204,6 +281,46 @@ class ДобычаМод(loader.Module):
             " <code>t.me/c/1234567890/123</code> <i>work. For private"
             " channels you must be a member.</i>"
         ),
+        "all_usage": (
+            "📡 <b>Haul all media from a channel</b>\n\n"
+            "<code>{0}gmall @name</code>\n"
+            "<code>{0}gmall t.me/c/1234567890</code>\n\n"
+            "<i>It asks what to take first, then creates a mirror channel"
+            " for this source.</i>"
+        ),
+        "ready": (
+            "📡 <b>Walk “{}”</b>\n\n{}\n\n"
+            "<i>Tick what to take and hit Start. To stop —</i>"
+            " <code>{}gmstop</code>"
+        ),
+        "lbl_target": "Into",
+        "lbl_known": "Already hauled",
+        "mirror_new": "a new channel “{}”",
+        "mirror_old": "“{}” — already there",
+        "walk": (
+            "📡 <b>“{}”</b>\n\n"
+            "├ <b>Looked at:</b> {}\n"
+            "├ <b>Hauled:</b> {}\n"
+            "├ <b>Skipped:</b> {}\n"
+            "└ <b>Running:</b> {}\n\n"
+            "<i>To stop —</i> <code>{}gmstop</code>"
+        ),
+        "walked": (
+            "✅ <b>Walk of “{}” finished</b>\n\n"
+            "├ <b>Looked at:</b> {}\n"
+            "├ <b>Hauled:</b> {}\n"
+            "├ <b>Skipped:</b> {}\n"
+            "├ <b>Took:</b> {}\n"
+            "└ <b>Into:</b> {}"
+        ),
+        "halted": "⏹ <b>Walk of “{}” stopped</b>\n\n{}",
+        "busy": (
+            "⏳ <b>A walk is already running</b>\n\n"
+            "<i>Wait for it or stop it:</i> <code>{}gmstop</code>"
+        ),
+        "idle": "🤷 <b>Nothing is being walked right now</b>",
+        "halting": "⏹ <b>Stopping…</b>",
+        "waiting": "⏳ <b>Pausing {}</b> — Telegram asks so",
         "no_link": (
             "🚫 <b>No post link here</b>\n\n"
             "<i>Need a link like</i> <code>t.me/name/123</code>"
@@ -297,6 +414,8 @@ class ДобычаМод(loader.Module):
         "btn_album": "🖼 Albums: {}",
         "btn_caption": "📝 Caption: {}",
         "btn_box": "↗️ Storage",
+        "btn_all": "📡 Walk a channel",
+        "btn_go": "▶️ Start",
         "btn_kinds": "🎞 What to take",
         "btn_memory": "🧠 Memory: {}",
         "btn_forget": "🧹 Forget ({})",
@@ -371,6 +490,15 @@ class ДобычаМод(loader.Module):
 
     def __init__(self):
         self._lock = asyncio.Lock()
+        self._job = None
+        self._halt = False
+
+    def on_unload(self):
+        """Оборвать обход канала, если модуль выгружают на ходу."""
+        self._halt = True
+
+        if self._job is not None and not self._job.done():
+            self._job.cancel()
 
     # ------------------------------------------------------------------ #
     #  Команды
@@ -386,6 +514,46 @@ class ДобычаМод(loader.Module):
     async def gmherecmd(self, message):
         """<ссылка> [сколько] — то же, но прислать в текущий чат"""
         await self._haul(message, here=True)
+
+    @loader.owner
+    @loader.command(aliases=["парси"])
+    async def gmallcmd(self, message):
+        """<ссылка или @ник> — забрать всё медиа канала в отдельный канал"""
+        args = utils.get_args_raw(message) or ""
+
+        if not args.strip():
+            await utils.answer(message, self.strings["all_usage"].format(self._prefix))
+            return
+
+        if self._job is not None and not self._job.done():
+            await utils.answer(message, self.strings["busy"].format(self._prefix))
+            return
+
+        sent = await utils.answer(message, self.strings["cb_working"])
+
+        try:
+            chat = await self._source(args)
+        except Exception:
+            logger.exception("Канал для обхода не открылся")
+            chat = None
+
+        if chat is None:
+            await utils.answer(sent, self.strings["no_chat"])
+            return
+
+        self.set("aim", int(getattr(chat, "id", 0)))
+        await self._answer(sent, self._ready(chat), self._kinds_markup(ready=True))
+
+    @loader.owner
+    @loader.command(aliases=["стоп"])
+    async def gmstopcmd(self, message):
+        """— остановить обход канала"""
+        if self._job is None or self._job.done():
+            await utils.answer(message, self.strings["idle"])
+            return
+
+        self._halt = True
+        await utils.answer(message, self.strings["halting"])
 
     @loader.command(aliases=["хранилище"])
     async def gmboxcmd(self, message):
@@ -771,6 +939,236 @@ class ДобычаМод(loader.Module):
 
         return "file.bin"
 
+    # ------------------------------------------------------------------ #
+    #  Обход целого канала
+    # ------------------------------------------------------------------ #
+    async def _source(self, args: str):
+        """Канал по @нику, по ссылке на него или по ссылке на любой пост."""
+        found = LINK.search(args)
+
+        if found:
+            return await self._chat(found)
+
+        raw = args.strip().split()[0]
+
+        for junk in ("https://", "http://", "t.me/", "telegram.me/", "@"):
+            if raw.startswith(junk):
+                raw = raw[len(junk):]
+
+        raw = raw.split("?")[0].strip("/")
+
+        if raw.startswith("c/"):
+            raw = raw[2:].split("/")[0]
+
+            return await self._find(int(f"-100{raw}"))
+
+        return await self.client.get_entity(raw.split("/")[0])
+
+    async def _aim(self):
+        """Канал, который выбрали для обхода."""
+        aim = self.get("aim")
+
+        return await self._find(int(f"-100{aim}")) if aim else None
+
+    def _ready(self, chat) -> str:
+        """Что будет, если нажать «Начать»."""
+        mirrors = self.pointer("mirrors", {})
+        known = mirrors.get(str(getattr(chat, "id", 0)))
+        title = self.strings["box_named"].format(
+            utils.escape_html(getattr(chat, "title", None) or "—")
+        )
+        rows = [
+            (self.strings["lbl_kinds"], self._kinds_line()),
+            (
+                self.strings["lbl_target"],
+                self.strings["mirror_old" if known else "mirror_new"].format(title),
+            ),
+            (
+                self.strings["lbl_known"],
+                self._posts(
+                    sum(
+                        1
+                        for mark in self._done()
+                        if mark.startswith(f"{getattr(chat, 'id', 0)}:")
+                    )
+                ),
+            ),
+        ]
+
+        return self.strings["ready"].format(
+            utils.escape_html(getattr(chat, "title", None) or "—"),
+            self._block(rows),
+            self._prefix,
+        )
+
+    async def _start(self, call) -> None:
+        """Завести зеркало и запустить обход в фоне."""
+        if self._job is not None and not self._job.done():
+            await call.answer(self.strings["busy"].format(self._prefix), show_alert=True)
+            return
+
+        chat = await self._aim()
+
+        if chat is None:
+            await call.edit(self.strings["no_chat"])
+            return
+
+        await call.answer(self.strings["cb_working"])
+
+        try:
+            mirror = await self._mirror(chat)
+        except Exception as error:
+            logger.exception("Зеркало не завелось")
+            await call.edit(self.strings["make_failed"].format(utils.escape_html(str(error))))
+            return
+
+        self._halt = False
+        self._job = utils.spawn(self._parse(call, chat, mirror))
+
+    async def _mirror(self, chat):
+        """Отдельный канал под этот источник: заводим один раз."""
+        async with self._lock:
+            key = str(getattr(chat, "id", 0))
+            mirrors = self.pointer("mirrors", {})
+            known = mirrors.get(key)
+
+            if known and known.get("id") and known.get("hash"):
+                return types.InputPeerChannel(
+                    channel_id=int(str(known["id"]).removeprefix("-100")),
+                    access_hash=int(known["hash"]),
+                )
+
+            title = self.strings["box_named"].format(
+                getattr(chat, "title", None) or key
+            )[:128]
+            made = await self._create(title, self.strings["about_named"])
+            mirrors[key] = {
+                "id": int(f"-100{made.id}"),
+                "hash": int(getattr(made, "access_hash", 0) or 0),
+                "title": title,
+            }
+
+            return made
+
+    async def _parse(self, call, chat, mirror) -> None:
+        """Пройти канал целиком и переложить всё подходящее."""
+        title = utils.escape_html(getattr(chat, "title", None) or "—")
+        started = time.monotonic()
+        known = self._done()
+        seen = taken = skipped = 0
+        drawn = 0
+        sieve = FILTERS.get(frozenset(self.config["kinds"] or []))
+
+        try:
+            async for post in self.client.iter_messages(chat, filter=sieve):
+                if self._halt:
+                    break
+
+                seen += 1
+
+                if seen - drawn >= EVERY:
+                    drawn = seen
+                    await self._draw(call, title, seen, taken, skipped, started)
+
+                if not getattr(post, "media", None):
+                    continue
+
+                if not self._mine(post):
+                    skipped += 1
+                    continue
+
+                mark = self._mark(chat, post.id)
+
+                if self.config["skip_done"] and mark in known:
+                    skipped += 1
+                    continue
+
+                outcome = None
+
+                for _ in range(3):
+                    try:
+                        outcome = await self._move(mirror, chat, [post])
+                        break
+                    except errors.FloodWaitError as error:
+                        await self._draw(
+                            call, title, seen, taken, skipped, started, error.seconds
+                        )
+                        await asyncio.sleep(error.seconds + 5)
+
+                        if self._halt:
+                            break
+                    except Exception:
+                        logger.exception("Пост %s не переложился", post.id)
+                        break
+
+                if outcome is None:
+                    skipped += 1
+                    continue
+
+                if outcome["moved"]:
+                    taken += 1
+                    self._remember(known, mark, outcome["saved"])
+                else:
+                    skipped += 1
+
+                if self.config["pause"]:
+                    await asyncio.sleep(self.config["pause"])
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Обход канала оборвался")
+
+        where = self._mirror_link(chat)
+        card = self.strings["walked" if not self._halt else "halted"]
+        text = (
+            card.format(
+                title,
+                seen,
+                taken,
+                skipped,
+                self._span(time.monotonic() - started),
+                where,
+            )
+            if not self._halt
+            else card.format(
+                title,
+                self._block([
+                    (self.strings["lbl_known"], self._posts(taken)),
+                    (self.strings["lbl_target"], where),
+                ]),
+            )
+        )
+
+        try:
+            await call.edit(text)
+        except Exception:
+            logger.info("Итог обхода дорисовать не вышло")
+
+    async def _draw(self, call, title, seen, taken, skipped, started, wait=0) -> None:
+        """Перерисовать ход обхода, не роняя обход из-за неудачи."""
+        try:
+            body = self.strings["walk"].format(
+                title, seen, taken, skipped,
+                self._span(time.monotonic() - started), self._prefix,
+            )
+
+            if wait:
+                body = f"{body}\n\n{self.strings['waiting'].format(self._span(wait))}"
+
+            await call.edit(body)
+        except Exception:
+            logger.info("Ход обхода дорисовать не вышло")
+
+    def _mirror_link(self, chat) -> str:
+        known = self.pointer("mirrors", {}).get(str(getattr(chat, "id", 0))) or {}
+        link = self._box_link(known.get("id"))
+
+        return (
+            self.strings["in_box"].format(link)
+            if link
+            else self.strings["in_box_plain"]
+        )
+
     def _done(self) -> dict:
         """Что уже забрано: ключ поста → номер сообщения в хранилище."""
         return self.pointer("done", {})
@@ -838,17 +1236,19 @@ class ДобычаМод(loader.Module):
 
         return None
 
-    async def _create(self):
+    async def _create(self, title: str = None, about: str = None):
         created = await self.client(
             functions.channels.CreateChannelRequest(
-                title=self.strings["box"],
-                about=self.strings["about"],
+                title=title or self.strings["box"],
+                about=about or self.strings["about"],
                 broadcast=True,
                 megagroup=False,
             )
         )
         chat = created.chats[0]
-        self._keep(chat)
+
+        if title is None:
+            self._keep(chat)
 
         try:
             hello = await self.client.send_message(
@@ -1068,7 +1468,10 @@ class ДобычаМод(loader.Module):
                     "callback": self._forget,
                 },
             ],
-            [{"text": self.strings["btn_make"], "callback": self._make}],
+            [
+                {"text": self.strings["btn_all"], "callback": self._how_all},
+                {"text": self.strings["btn_make"], "callback": self._make},
+            ],
         ]
         link = self._box_link(self.get("box"))
 
@@ -1091,7 +1494,8 @@ class ДобычаМод(loader.Module):
 
         return ", ".join(self.strings[f"kind_{name}"] for name in chosen)
 
-    def _kinds_markup(self) -> list:
+    def _kinds_markup(self, ready: bool = False) -> list:
+        """Отметки типов. Перед обходом внизу «Начать», иначе «Назад»."""
         chosen = set(self.config["kinds"] or [])
         rows, pair = [], []
 
@@ -1100,7 +1504,7 @@ class ДобычаМод(loader.Module):
                 "text": ("✅ " if name in chosen else "▫️ ")
                 + self.strings[f"kind_{name}"],
                 "callback": self._flip,
-                "args": (name,),
+                "args": (name, ready),
             })
 
             if len(pair) == 2:
@@ -1110,17 +1514,21 @@ class ДобычаМод(loader.Module):
         if pair:
             rows.append(pair)
 
-        rows.append([
-            {"text": self.strings["btn_back"], "callback": self._back},
-            {"text": self.strings["btn_close"], "callback": self._close},
-        ])
+        if ready:
+            rows.append([{"text": self.strings["btn_go"], "callback": self._start}])
+            rows.append([{"text": self.strings["btn_close"], "callback": self._close}])
+        else:
+            rows.append([
+                {"text": self.strings["btn_back"], "callback": self._back},
+                {"text": self.strings["btn_close"], "callback": self._close},
+            ])
 
         return rows
 
     async def _to_kinds(self, call) -> None:
         await call.edit(self.strings["kinds_title"], reply_markup=self._kinds_markup())
 
-    async def _flip(self, call, name: str) -> None:
+    async def _flip(self, call, name: str, ready: bool = False) -> None:
         chosen = [item for item in (self.config["kinds"] or []) if item != name]
 
         if len(chosen) == len(self.config["kinds"] or []):
@@ -1128,7 +1536,16 @@ class ДобычаМод(loader.Module):
 
         self.config["kinds"] = chosen
         await call.answer(self.strings["cb_saved"])
-        await call.edit(self.strings["kinds_title"], reply_markup=self._kinds_markup())
+
+        if not ready:
+            await call.edit(self.strings["kinds_title"], reply_markup=self._kinds_markup())
+            return
+
+        chat = await self._aim()
+        await call.edit(
+            self._ready(chat) if chat else self.strings["no_chat"],
+            reply_markup=self._kinds_markup(ready=True),
+        )
 
     async def _back(self, call) -> None:
         await call.edit(self._card(), reply_markup=self._markup())
@@ -1149,6 +1566,13 @@ class ДобычаМод(loader.Module):
         self.config["caption"] = order[(now + 1) % len(order)]
         await call.answer(self.strings["cb_saved"])
         await call.edit(self._card(), reply_markup=self._markup())
+
+    async def _how_all(self, call) -> None:
+        """Обходу нужна ссылка, а кнопка её не спросит — подсказываем команду."""
+        await call.answer(
+            re.sub(r"<[^>]+>", "", self.strings["all_usage"].format(self._prefix)),
+            show_alert=True,
+        )
 
     async def _make(self, call) -> None:
         await call.answer(self.strings["cb_working"])
