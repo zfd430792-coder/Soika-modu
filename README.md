@@ -17,6 +17,7 @@
 | [`saver.py`](saver.py) | `.saver`, `.saverbox`, `.savermake`, `.saverclean`, `.saverignore` | складывает одноразовые медиа и удалённые сообщения в личные каналы |
 | [`tiktok.py`](tiktok.py) | `.tt`, `.ttinfo`, `.ttaudio`, `.ttcfg`, `.ttproxy` | видео из TikTok без водяного знака, с автором и описанием |
 | [`ai.py`](ai.py) | `.ai`, `.aimodels`, `.aikey`, `.airole`, `.aicfg` | вопрос к нейросети через Groq, модель из живого списка |
+| [`grab.py`](grab.py) | `.gm`, `.gmhere`, `.gmbox`, `.gmmake`, `.gmcfg` | забирает медиа из постов с запретом сохранения в свой канал |
 
 ---
 
