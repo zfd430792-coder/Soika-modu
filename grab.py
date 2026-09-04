@@ -29,8 +29,22 @@ logger = logging.getLogger(__name__)
 LINK = re.compile(
     r"(?:https?://)?t\.me/(?:s/)?"
     r"(?:c/(?P<raw>\d+)|(?P<name>[A-Za-z][\w\d_]{3,31}))"
-    r"/(?:(?P<topic>\d+)/)?(?P<post>\d+)(?:-(?P<last>\d+))?",
+    r"/(?:(?P<topic>\d+)/)?(?P<post>\d+)(?:-(?P<last>\d+))?"
+    r"(?:\?(?P<query>[^\s]*))?",
     re.IGNORECASE,
+)
+
+#: Что за вложение в посте. Порядок важен: кружок — тоже видео, а
+#: голосовое — тоже аудио, поэтому частное проверяем раньше общего
+KINDS = (
+    ("photo", "photo"),
+    ("round", "video_note"),
+    ("voice", "voice"),
+    ("gif", "gif"),
+    ("video", "video"),
+    ("audio", "audio"),
+    ("sticker", "sticker"),
+    ("document", "document"),
 )
 
 #: Сколько соседних постов просматривать в поисках остальных частей альбома
@@ -79,14 +93,24 @@ class ДобычаМод(loader.Module):
             "<i>Удалён или ссылка ведёт не туда.</i>"
         ),
         "no_media": "🚫 <b>В посте нет вложений</b>",
-        "empty": (
-            "🤷 <b>Забирать нечего</b>\n\n"
-            "<i>Ни в одном из просмотренных постов вложений не нашлось.</i>"
+        "no_kind": (
+            "🚫 <b>В посте нет того, что мы качаем</b>\n\n"
+            "<i>Сейчас забираются:</i> {}\n"
+            "<i>Поменять:</i> <code>{}gmcfg</code> <i>→ 🎞</i>"
         ),
+        "already": (
+            "📦 <b>Этот пост уже забран</b>\n\n└ {}\n\n"
+            "<i>Забирать заново — выключи память в</i> <code>{}gmcfg</code>"
+        ),
+        "in_box": "<a href=\"{}\">посмотреть</a>",
+        "in_box_plain": "лежит в хранилище",
+        "empty": "🤷 <b>Ничего не забрано</b>",
         "done_one": "✅ <b>Забрано</b> · {}",
         "done_many": "✅ <b>Забрано постов: {}</b> · {}\n{}",
         "skipped": "└ <i>пропущено: {} — {}</i>",
         "why_gone": "не нашлось: {}",
+        "why_done": "уже было: {}",
+        "why_kind": "не тот тип: {}",
         "why_empty": "без вложений: {}",
         "why_heavy": "тяжелее лимита: {}",
         "to_box": "<a href=\"{}\">в хранилище</a>",
@@ -119,6 +143,22 @@ class ДобычаМод(loader.Module):
         "lbl_caption": "Подпись",
         "lbl_limit": "За раз не больше",
         "lbl_max": "Вес файла до",
+        "lbl_kinds": "Качаю",
+        "lbl_done": "Помню забранных",
+        "kinds_all": "всё подряд",
+        "kinds_none": "<i>ничего — отметь хоть что-то</i>",
+        "kind_photo": "🖼 фото",
+        "kind_video": "🎬 видео",
+        "kind_round": "⭕️ кружки",
+        "kind_voice": "🎤 голосовые",
+        "kind_audio": "🎵 музыку",
+        "kind_gif": "🎞 гифки",
+        "kind_sticker": "🃏 стикеры",
+        "kind_document": "📄 файлы",
+        "kinds_title": (
+            "🎞 <b>Что забирать</b>\n\n"
+            "<i>Отмеченное качается, остальное пропускается.</i>"
+        ),
         "where_box": "в хранилище",
         "where_here": "в текущий чат",
         "album_all": "забираю целиком",
@@ -126,16 +166,23 @@ class ДобычаМод(loader.Module):
         "cap_full": "полная",
         "cap_short": "короткая",
         "cap_none": "без неё",
-        "posts": "{} постов",
+        "p_posts": "пост|поста|постов",
         "megabytes": "{} МБ",
         # ── кнопки ──────────────────────────────────────────────────────
         "btn_where": "📦 Куда: {}",
         "btn_album": "🖼 Альбомы: {}",
         "btn_caption": "📝 Подпись: {}",
         "btn_box": "↗️ Хранилище",
+        "btn_kinds": "🎞 Что качать",
+        "btn_memory": "🧠 Память: {}",
+        "btn_forget": "🧹 Забыть ({})",
+        "btn_back": "⬅️ Назад",
         "btn_make": "🧰 Завести заново",
         "btn_close": "✖️ Закрыть",
         "cb_saved": "✅ Готово",
+        "forgot": "🧹 Память очищена",
+        "on": "вкл",
+        "off": "выкл",
         "cb_working": "⏳ Секунду…",
     }
 
@@ -174,14 +221,24 @@ class ДобычаМод(loader.Module):
             "<i>Deleted, or the link points elsewhere.</i>"
         ),
         "no_media": "🚫 <b>No attachment in the post</b>",
-        "empty": (
-            "🤷 <b>Nothing to haul</b>\n\n"
-            "<i>None of the posts looked at had attachments.</i>"
+        "no_kind": (
+            "🚫 <b>The post has nothing of the kinds we take</b>\n\n"
+            "<i>Currently taking:</i> {}\n"
+            "<i>Change:</i> <code>{}gmcfg</code> <i>→ 🎞</i>"
         ),
+        "already": (
+            "📦 <b>This post was hauled already</b>\n\n└ {}\n\n"
+            "<i>To haul it again, switch the memory off in</i> <code>{}gmcfg</code>"
+        ),
+        "in_box": "<a href=\"{}\">have a look</a>",
+        "in_box_plain": "it is in the storage",
+        "empty": "🤷 <b>Nothing hauled</b>",
         "done_one": "✅ <b>Hauled</b> · {}",
         "done_many": "✅ <b>Posts hauled: {}</b> · {}\n{}",
         "skipped": "└ <i>skipped: {} — {}</i>",
         "why_gone": "not found: {}",
+        "why_done": "already had: {}",
+        "why_kind": "wrong type: {}",
         "why_empty": "no attachment: {}",
         "why_heavy": "over the limit: {}",
         "to_box": "<a href=\"{}\">to storage</a>",
@@ -211,6 +268,22 @@ class ДобычаМод(loader.Module):
         "lbl_caption": "Caption",
         "lbl_limit": "At most per run",
         "lbl_max": "File size up to",
+        "lbl_kinds": "Taking",
+        "lbl_done": "Remembered",
+        "kinds_all": "everything",
+        "kinds_none": "<i>nothing — tick at least one</i>",
+        "kind_photo": "🖼 photos",
+        "kind_video": "🎬 videos",
+        "kind_round": "⭕️ video notes",
+        "kind_voice": "🎤 voice",
+        "kind_audio": "🎵 music",
+        "kind_gif": "🎞 gifs",
+        "kind_sticker": "🃏 stickers",
+        "kind_document": "📄 files",
+        "kinds_title": (
+            "🎞 <b>What to take</b>\n\n"
+            "<i>Ticked kinds are hauled, the rest are skipped.</i>"
+        ),
         "where_box": "storage channel",
         "where_here": "current chat",
         "album_all": "whole album",
@@ -218,15 +291,22 @@ class ДобычаМод(loader.Module):
         "cap_full": "full",
         "cap_short": "short",
         "cap_none": "none",
-        "posts": "{} posts",
+        "p_posts": "post|posts",
         "megabytes": "{} MB",
         "btn_where": "📦 To: {}",
         "btn_album": "🖼 Albums: {}",
         "btn_caption": "📝 Caption: {}",
         "btn_box": "↗️ Storage",
+        "btn_kinds": "🎞 What to take",
+        "btn_memory": "🧠 Memory: {}",
+        "btn_forget": "🧹 Forget ({})",
+        "btn_back": "⬅️ Back",
         "btn_make": "🧰 Create anew",
         "btn_close": "✖️ Close",
         "cb_saved": "✅ Done",
+        "forgot": "🧹 Memory cleared",
+        "on": "on",
+        "off": "off",
         "cb_working": "⏳ One moment…",
     }
 
@@ -248,6 +328,20 @@ class ДобычаМод(loader.Module):
             "full",
             "Подпись: полная с исходным текстом, короткая или без неё",
             validator=loader.validators.Choice(["full", "short", "none"]),
+        ),
+        loader.ConfigValue(
+            "kinds",
+            ["photo", "video", "round", "voice", "audio", "gif", "sticker", "document"],
+            "Что именно забирать из поста, остальное пропускать",
+            validator=loader.validators.MultiChoice(
+                ["photo", "video", "round", "voice", "audio", "gif", "sticker", "document"]
+            ),
+        ),
+        loader.ConfigValue(
+            "skip_done",
+            True,
+            "Не качать пост повторно, если он уже лежит в хранилище",
+            validator=loader.validators.Boolean(),
         ),
         loader.ConfigValue(
             "limit",
@@ -355,6 +449,9 @@ class ДобычаМод(loader.Module):
             return
 
         wanted = self._wanted(found, args)
+        # ?single в ссылке Telegram ставит, когда указано одно вложение
+        # альбома, а не весь пост — уважаем это
+        single = "single" in (found.group("query") or "").lower()
         sent = await utils.answer(message, self.strings["working"])
 
         try:
@@ -368,7 +465,7 @@ class ДобычаМод(loader.Module):
             await utils.answer(sent, self.strings["no_chat"])
             return
 
-        await self._walk(sent, chat, wanted, here)
+        await self._walk(sent, chat, wanted, here, single)
 
     def _wanted(self, found, args: str) -> list:
         """Какие посты забирать: один, диапазон из ссылки или счёт из аргумента."""
@@ -389,28 +486,38 @@ class ДобычаМод(loader.Module):
 
         return list(range(first, stop + 1))
 
-    async def _walk(self, sent, chat, wanted: list, here: bool) -> None:
+    async def _walk(self, sent, chat, wanted: list, here: bool, single: bool = False) -> None:
         """Пройти по постам и переложить всё, что нашлось."""
         target = sent.peer_id if here else await self._box()
         taken, seen = 0, set()
-        tally = {"gone": 0, "empty": 0, "heavy": 0}
+        tally = {"gone": 0, "empty": 0, "heavy": 0, "kind": 0, "done": 0}
         heaviest = 0
         trouble = ""
+        known = self._done()
+        older = 0
 
         for number, post in enumerate(wanted, 1):
             if post in seen:
+                continue
+
+            mark = self._mark(chat, post)
+
+            # Уже лежит в хранилище — второй раз не тащим
+            if self.config["skip_done"] and mark in known:
+                older = known[mark]
+                tally["done"] += 1
                 continue
 
             if len(wanted) > 1 and number % 5 == 1:
                 await self._tick(sent, number, len(wanted))
 
             try:
-                group, why = await self._group(chat, post)
+                group, why = await self._group(chat, post, single)
             except errors.FloodWaitError as error:
                 await utils.answer(
                     sent,
                     self.strings["flood"].format(
-                        self._span(error.seconds), self.strings["posts"].format(taken)
+                        self._span(error.seconds), self._posts(taken)
                     ),
                 )
                 return
@@ -427,12 +534,12 @@ class ДобычаМод(loader.Module):
             seen.update(item.id for item in group)
 
             try:
-                moved, heavy = await self._move(target, chat, group)
+                outcome = await self._move(target, chat, group)
             except errors.FloodWaitError as error:
                 await utils.answer(
                     sent,
                     self.strings["flood"].format(
-                        self._span(error.seconds), self.strings["posts"].format(taken)
+                        self._span(error.seconds), self._posts(taken)
                     ),
                 )
                 return
@@ -442,27 +549,33 @@ class ДобычаМод(loader.Module):
                 tally["empty"] += 1
                 continue
 
-            if moved:
+            if outcome["moved"]:
                 taken += 1
-            elif heavy:
+
+                if not here:
+                    for item in group:
+                        self._remember(known, self._mark(chat, item.id), outcome["saved"])
+            elif outcome["heavy"]:
                 tally["heavy"] += 1
-                heaviest = max(heaviest, heavy)
+                heaviest = max(heaviest, outcome["heavy"])
+            elif outcome["wrong"]:
+                tally["kind"] += 1
             else:
                 tally["empty"] += 1
 
             if self.config["pause"] and number < len(wanted):
                 await asyncio.sleep(self.config["pause"])
 
-        await self._report(sent, taken, tally, here, wanted, heaviest, trouble)
+        await self._report(sent, taken, tally, here, wanted, heaviest, trouble, older)
 
-    async def _group(self, chat, post: int):
+    async def _group(self, chat, post: int, single: bool = False):
         """Пост (а если он часть альбома — весь альбом) и причина, если пусто."""
         found = await self.client.get_messages(chat, ids=post)
 
         if not found:
             return [], "gone"
 
-        if not getattr(found, "grouped_id", None) or not self.config["album"]:
+        if single or not getattr(found, "grouped_id", None) or not self.config["album"]:
             return ([found], None) if getattr(found, "media", None) else ([], "empty")
 
         around = await self.client.get_messages(
@@ -482,9 +595,14 @@ class ДобычаМод(loader.Module):
         """Скачать вложения поста и отправить их к себе."""
         limit = self.config["max_mb"] * 1024 * 1024
         files, attributes = [], []
-        heavy = 0
+        heavy = wrong = 0
 
         for item in group:
+            if not self._mine(item):
+                logger.info("Пост %s пропущен: тип %s не наш", item.id, self._kind(item))
+                wrong += 1
+                continue
+
             size = getattr(getattr(item, "file", None), "size", None)
 
             if size and size > limit:
@@ -503,12 +621,12 @@ class ДобычаМод(loader.Module):
             attributes.append(self._carry(item))
 
         if not files:
-            return False, heavy
+            return {"moved": False, "heavy": heavy, "wrong": wrong, "saved": 0}
 
         caption = self._caption(chat, group[0])
 
         if len(files) == 1:
-            await self.client.send_file(
+            saved = await self.client.send_file(
                 target,
                 files[0],
                 caption=caption[:1024],
@@ -516,12 +634,19 @@ class ДобычаМод(loader.Module):
                 force_document=False,
             )
         else:
-            await self.client.send_file(target, files, caption=caption[:1024])
+            saved = await self.client.send_file(target, files, caption=caption[:1024])
 
         if len(caption) > 1024:
             await self.client.send_message(target, caption, link_preview=False)
 
-        return True, heavy
+        first = saved[0] if isinstance(saved, list) and saved else saved
+
+        return {
+            "moved": True,
+            "heavy": heavy,
+            "wrong": wrong,
+            "saved": int(getattr(first, "id", 0) or 0),
+        }
 
     # ------------------------------------------------------------------ #
     #  Кто и откуда
@@ -599,6 +724,19 @@ class ДобычаМод(loader.Module):
         return f"https://t.me/c/{raw.removeprefix('-100')}/{post}"
 
     @staticmethod
+    def _kind(post) -> str:
+        """Тип вложения поста: фото, кружок, голосовое и так далее."""
+        for name, attribute in KINDS:
+            if getattr(post, attribute, None):
+                return name
+
+        return "document"
+
+    def _mine(self, post) -> bool:
+        """Забираем ли мы такое вложение."""
+        return self._kind(post) in (self.config["kinds"] or [])
+
+    @staticmethod
     def _carry(post) -> list:
         """Родные атрибуты файла: без них Telegram перевирает размер видео."""
         document = getattr(post, "document", None)
@@ -632,6 +770,21 @@ class ДобычаМод(loader.Module):
             return "video.mp4"
 
         return "file.bin"
+
+    def _done(self) -> dict:
+        """Что уже забрано: ключ поста → номер сообщения в хранилище."""
+        return self.pointer("done", {})
+
+    @staticmethod
+    def _mark(chat, post: int) -> str:
+        return f"{getattr(chat, 'id', 0)}:{post}"
+
+    def _remember(self, known: dict, mark: str, saved: int) -> None:
+        """Запомнить забранное, не давая памяти разрастись без края."""
+        known[mark] = saved
+
+        while len(known) > 5000:
+            known.pop(next(iter(known)))
 
     # ------------------------------------------------------------------ #
     #  Хранилище
@@ -754,13 +907,29 @@ class ДобычаМод(loader.Module):
         wanted: list,
         heaviest: int,
         trouble: str,
+        older: int = 0,
     ) -> None:
         skipped = sum(tally.values())
         asked = len(wanted)
 
         if not taken and asked == 1:
             # По одному посту говорим ровно то, что случилось
-            if tally["heavy"]:
+            if tally["done"]:
+                link = self._box_link(self.get("box"), older)
+                await utils.answer(
+                    sent,
+                    self.strings["already"].format(
+                        self.strings["in_box"].format(link)
+                        if link
+                        else self.strings["in_box_plain"],
+                        self._prefix,
+                    ),
+                )
+            elif tally["kind"]:
+                await utils.answer(
+                    sent, self.strings["no_kind"].format(self._kinds_line(), self._prefix)
+                )
+            elif tally["heavy"]:
                 await utils.answer(
                     sent,
                     self.strings["too_big"].format(self._weight(heaviest), self._prefix),
@@ -777,7 +946,10 @@ class ДобычаМод(loader.Module):
             return
 
         if not taken:
-            await utils.answer(sent, self.strings["empty"])
+            why = self._why(tally)
+            await utils.answer(
+                sent, f"{self.strings['empty']}\n\n{why}" if why else self.strings["empty"]
+            )
             return
 
         link = self._box_link(self.get("box"))
@@ -791,18 +963,45 @@ class ДобычаМод(loader.Module):
             await utils.answer(sent, self.strings["done_one"].format(where))
             return
 
-        why = ", ".join(
-            self.strings[f"why_{name}"].format(count)
-            for name, count in tally.items()
-            if count
-        )
         await utils.answer(
             sent,
             self.strings["done_many"].format(
                 taken,
                 where,
-                self.strings["skipped"].format(skipped, why) if skipped else "",
+                self.strings["skipped"].format(skipped, self._why(tally))
+                if skipped
+                else "",
             ).strip(),
+        )
+
+    def _posts(self, count: int) -> str:
+        """«1 пост», «2 поста», «5 постов» — и «posts» по-английски."""
+        forms = self.strings["p_posts"].split("|")
+
+        if len(forms) < 3:
+            return f"{count} {forms[0] if abs(count) == 1 else forms[-1]}"
+
+        tail = abs(count) % 100
+
+        if 11 <= tail <= 14:
+            return f"{count} {forms[2]}"
+
+        tail %= 10
+
+        if tail == 1:
+            return f"{count} {forms[0]}"
+
+        if 2 <= tail <= 4:
+            return f"{count} {forms[1]}"
+
+        return f"{count} {forms[2]}"
+
+    def _why(self, tally: dict) -> str:
+        """Причины пропуска одной строкой."""
+        return ", ".join(
+            self.strings[f"why_{name}"].format(count)
+            for name, count in tally.items()
+            if count
         )
 
     def _card(self) -> str:
@@ -815,9 +1014,16 @@ class ДобычаМод(loader.Module):
                 self.strings["lbl_album"],
                 self.strings["album_all" if self.config["album"] else "album_one"],
             ),
+            (self.strings["lbl_kinds"], self._kinds_line()),
             (self.strings["lbl_caption"], self.strings[f"cap_{self.config['caption']}"]),
-            (self.strings["lbl_limit"], self.strings["posts"].format(self.config["limit"])),
+            (self.strings["lbl_limit"], self._posts(self.config["limit"])),
             (self.strings["lbl_max"], self.strings["megabytes"].format(self.config["max_mb"])),
+            (
+                self.strings["lbl_done"],
+                self._posts(len(self._done()))
+                if self.config["skip_done"]
+                else self.strings["off"],
+            ),
         ]
 
         return self.strings["cfg"].format(self._block(rows))
@@ -841,14 +1047,28 @@ class ДобычаМод(loader.Module):
                 },
             ],
             [
+                {"text": self.strings["btn_kinds"], "callback": self._to_kinds},
                 {
                     "text": self.strings["btn_caption"].format(
                         self.strings[f"cap_{self.config['caption']}"]
                     ),
                     "callback": self._cycle,
                 },
-                {"text": self.strings["btn_make"], "callback": self._make},
             ],
+            [
+                {
+                    "text": self.strings["btn_memory"].format(
+                        self.strings["on" if self.config["skip_done"] else "off"]
+                    ),
+                    "callback": self._toggle,
+                    "args": ("skip_done",),
+                },
+                {
+                    "text": self.strings["btn_forget"].format(len(self._done())),
+                    "callback": self._forget,
+                },
+            ],
+            [{"text": self.strings["btn_make"], "callback": self._make}],
         ]
         link = self._box_link(self.get("box"))
 
@@ -858,6 +1078,65 @@ class ДобычаМод(loader.Module):
         rows.append([{"text": self.strings["btn_close"], "callback": self._close}])
 
         return rows
+
+    def _kinds_line(self) -> str:
+        """Что качаем — одной строкой."""
+        chosen = [name for name, _ in KINDS if name in (self.config["kinds"] or [])]
+
+        if not chosen:
+            return self.strings["kinds_none"]
+
+        if len(chosen) == len(KINDS):
+            return self.strings["kinds_all"]
+
+        return ", ".join(self.strings[f"kind_{name}"] for name in chosen)
+
+    def _kinds_markup(self) -> list:
+        chosen = set(self.config["kinds"] or [])
+        rows, pair = [], []
+
+        for name, _ in KINDS:
+            pair.append({
+                "text": ("✅ " if name in chosen else "▫️ ")
+                + self.strings[f"kind_{name}"],
+                "callback": self._flip,
+                "args": (name,),
+            })
+
+            if len(pair) == 2:
+                rows.append(pair)
+                pair = []
+
+        if pair:
+            rows.append(pair)
+
+        rows.append([
+            {"text": self.strings["btn_back"], "callback": self._back},
+            {"text": self.strings["btn_close"], "callback": self._close},
+        ])
+
+        return rows
+
+    async def _to_kinds(self, call) -> None:
+        await call.edit(self.strings["kinds_title"], reply_markup=self._kinds_markup())
+
+    async def _flip(self, call, name: str) -> None:
+        chosen = [item for item in (self.config["kinds"] or []) if item != name]
+
+        if len(chosen) == len(self.config["kinds"] or []):
+            chosen.append(name)
+
+        self.config["kinds"] = chosen
+        await call.answer(self.strings["cb_saved"])
+        await call.edit(self.strings["kinds_title"], reply_markup=self._kinds_markup())
+
+    async def _back(self, call) -> None:
+        await call.edit(self._card(), reply_markup=self._markup())
+
+    async def _forget(self, call) -> None:
+        self._done().clear()
+        await call.answer(self.strings["forgot"])
+        await call.edit(self._card(), reply_markup=self._markup())
 
     async def _toggle(self, call, key: str) -> None:
         self.config[key] = not self.config[key]
@@ -888,13 +1167,13 @@ class ДобычаМод(loader.Module):
     #  Мелочи
     # ------------------------------------------------------------------ #
     @staticmethod
-    def _box_link(box):
+    def _box_link(box, post: int = 1):
         try:
             raw = str(int(box)).removeprefix("-100")
         except (TypeError, ValueError):
             return None
 
-        return f"https://t.me/c/{raw}/1" if raw.isdigit() else None
+        return f"https://t.me/c/{raw}/{post or 1}" if raw.isdigit() else None
 
     def _block(self, rows: list) -> str:
         lines = []
