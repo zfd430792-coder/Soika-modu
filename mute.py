@@ -1,4 +1,12 @@
-"""Мут в группе, который не обходится ботами-помощниками.
+"""Мут в личке и в группе.
+
+В личке участников всего двое, поэтому мут там надёжный: сообщение
+замученного удаляется сразу и у него тоже — он видит, как оно исчезает.
+Обойти это нечем: кто бы ни писал за него — он сам, подключённый к его
+аккаунту бот или автоматизация — сообщение всё равно приходит от его
+имени, а значит попадает под тот же нож.
+
+Дальше про группы, где всё сложнее.
 
 Обычный мут закрывает только отправку сообщений, и его обходят через
 инлайн-ботов: сообщение шлёт сам замученный, а бот лишь подставляет текст.
@@ -73,6 +81,7 @@ class МутМод(loader.Module):
             "<code>{0}mute</code> ответом — навсегда\n"
             "<code>{0}mute 30м шум</code> ответом — на полчаса с причиной\n"
             "<code>{0}mute @ник 2ч</code> — по нику\n"
+            "<i>В личке — то же самое: его сообщения будут исчезать.</i>\n"
             "<code>{0}unmute</code> ответом или по нику — снять\n"
             "<code>{0}mutes</code> — кто сейчас замучен"
         ),
@@ -80,13 +89,20 @@ class МутМод(loader.Module):
             "🚫 <b>Кого мутить?</b>\n\n"
             "<i>Ответь на сообщение или назови</i> <code>@ник</code>"
         ),
-        "not_group": "🚫 <b>Мут работает только в группах</b>",
         "not_admin": (
             "🚫 <b>Не хватает прав</b>\n\n"
             "<i>Нужны «Блокировка участников» и «Удаление сообщений».</i>"
         ),
         "self_mute": "🙃 <b>Себя мутить не будем</b>",
         "muted": "🔇 <b>{}</b> <b>замучен</b>\n{}",
+        "pm_muted": (
+            "🔇 <b>{}</b> <b>замучен в личке</b>\n{}\n\n"
+            "<i>Его сообщения будут исчезать — и у него тоже.</i>"
+        ),
+        "pm_unmuted": "🔊 <b>{}</b> <b>снова пишет в личку</b>",
+        "pm_list": "🔇 <b>Замучены в личке: {}</b>\n\n{}",
+        "pm_empty": "🔊 <b>В личке никто не замучен</b>",
+        "kept": "📥 <b>От</b> {} <b>·</b> <i>стёрто в личке</i>",
         "unmuted": "🔊 <b>{}</b> <b>размучен</b>",
         "was_not": "🤷 <b>{}</b> <b>и не был замучен</b>",
         "lbl_until": "До",
@@ -144,6 +160,10 @@ class МутМод(loader.Module):
         "lbl_guard": "Ловлю обход",
         "lbl_marks": "По следам автора",
         "lbl_notice": "Пишу в чат",
+        "lbl_both": "В личке стираю",
+        "both_yes": "у обоих",
+        "both_no": "только у себя",
+        "lbl_keep": "Копию себе",
         "lbl_lock": "Новые боты",
         "lock_on": "сразу без слова",
         "lock_off": "как есть",
@@ -158,6 +178,8 @@ class МутМод(loader.Module):
         "btn_guard": "🛡 Ловля: {}",
         "btn_marks": "🔍 По следам: {}",
         "btn_notice": "💬 Писать в чат: {}",
+        "btn_both": "🧹 У обоих: {}",
+        "btn_keep": "📥 Копия: {}",
         "btn_lock": "🔒 Новые боты: {}",
         "btn_kick": "🚪 Выгонять бота: {}",
         "btn_unmute": "🔊 {}",
@@ -177,6 +199,7 @@ class МутМод(loader.Module):
             "<code>{0}mute</code> as a reply — forever\n"
             "<code>{0}mute 30m noise</code> as a reply — half an hour, with a reason\n"
             "<code>{0}mute @name 2h</code> — by username\n"
+            "<i>In DMs it is the same: their messages will vanish.</i>\n"
             "<code>{0}unmute</code> as a reply or by username — lift it\n"
             "<code>{0}mutes</code> — who is muted now"
         ),
@@ -184,13 +207,20 @@ class МутМод(loader.Module):
             "🚫 <b>Mute whom?</b>\n\n"
             "<i>Reply to a message or name a</i> <code>@username</code>"
         ),
-        "not_group": "🚫 <b>Mute only works in groups</b>",
         "not_admin": (
             "🚫 <b>Not enough rights</b>\n\n"
             "<i>“Ban users” and “Delete messages” are needed.</i>"
         ),
         "self_mute": "🙃 <b>Not muting yourself</b>",
         "muted": "🔇 <b>{}</b> <b>is muted</b>\n{}",
+        "pm_muted": (
+            "🔇 <b>{}</b> <b>is muted in DMs</b>\n{}\n\n"
+            "<i>Their messages will vanish — on their side too.</i>"
+        ),
+        "pm_unmuted": "🔊 <b>{}</b> <b>can write to you again</b>",
+        "pm_list": "🔇 <b>Muted in DMs: {}</b>\n\n{}",
+        "pm_empty": "🔊 <b>Nobody is muted in DMs</b>",
+        "kept": "📥 <b>From</b> {} <b>·</b> <i>wiped in DMs</i>",
         "unmuted": "🔊 <b>{}</b> <b>is unmuted</b>",
         "was_not": "🤷 <b>{}</b> <b>was not muted</b>",
         "lbl_until": "Until",
@@ -245,6 +275,10 @@ class МутМод(loader.Module):
         "lbl_guard": "Catching bypass",
         "lbl_marks": "By author traces",
         "lbl_notice": "Posting in chat",
+        "lbl_both": "In DMs wipe",
+        "both_yes": "for both",
+        "both_no": "only my side",
+        "lbl_keep": "Keep a copy",
         "lbl_lock": "New bots",
         "lock_on": "silenced at once",
         "lock_off": "left alone",
@@ -258,6 +292,8 @@ class МутМод(loader.Module):
         "btn_guard": "🛡 Catching: {}",
         "btn_marks": "🔍 Traces: {}",
         "btn_notice": "💬 Post in chat: {}",
+        "btn_both": "🧹 For both: {}",
+        "btn_keep": "📥 Copy: {}",
         "btn_lock": "🔒 New bots: {}",
         "btn_kick": "🚪 Remove bot: {}",
         "btn_unmute": "🔊 {}",
@@ -290,6 +326,21 @@ class МутМод(loader.Module):
             "notice",
             True,
             "Писать в чат, что обход пойман",
+            validator=loader.validators.Boolean(),
+        ),
+        loader.ConfigValue(
+            "pm_both",
+            True,
+            (
+                "В личке стирать сообщение и у отправителя тоже — он увидит,"
+                " как оно исчезает. Выключено — пропадает только у тебя"
+            ),
+            validator=loader.validators.Boolean(),
+        ),
+        loader.ConfigValue(
+            "pm_keep",
+            False,
+            "Перед удалением пересылать копию себе в избранное",
             validator=loader.validators.Boolean(),
         ),
         loader.ConfigValue(
@@ -326,11 +377,7 @@ class МутМод(loader.Module):
     # ------------------------------------------------------------------ #
     @loader.command(aliases=["мут"])
     async def mutecmd(self, message):
-        """<реплай/@ник> [время] [причина] — замутить со всеми правами разом"""
-        if not getattr(message, "is_group", False) and not getattr(message, "is_channel", False):
-            await utils.answer(message, self.strings["not_group"])
-            return
-
+        """<реплай/@ник> [время] [причина] — замутить: в личке или в группе"""
         user = await self._target(message)
 
         if user is None:
@@ -352,6 +399,20 @@ class МутМод(loader.Module):
 
         span, why = self._parse(utils.get_args_raw(message) or "")
         until = int(time.time()) + span if span else 0
+        rows = [(self.strings["lbl_until"], self._until(until))]
+
+        if why:
+            rows.append((self.strings["lbl_why"], utils.escape_html(why)))
+
+        # В личке банить нечем и незачем: там мы сами себе админ и просто
+        # стираем всё, что приходит от замученного
+        if not self._grouped(message):
+            self._muted("pm")[str(user.id)] = self._note(user, until, why)
+            await utils.answer(
+                message,
+                self.strings["pm_muted"].format(self._link(user), self._block(rows)),
+            )
+            return
 
         try:
             await self.client(
@@ -371,20 +432,7 @@ class МутМод(loader.Module):
             )
             return
 
-        self._muted(message.chat_id)[str(user.id)] = {
-            "until": until,
-            "why": why,
-            "name": self._name(user),
-            "nick": (getattr(user, "username", None) or "").lower(),
-            "at": int(time.time()),
-            "tries": 0,
-        }
-
-        rows = [(self.strings["lbl_until"], self._until(until))]
-
-        if why:
-            rows.append((self.strings["lbl_why"], utils.escape_html(why)))
-
+        self._muted(message.chat_id)[str(user.id)] = self._note(user, until, why)
         await utils.answer(
             message,
             self.strings["muted"].format(self._link(user), self._block(rows)),
@@ -397,6 +445,14 @@ class МутМод(loader.Module):
 
         if user is None:
             await utils.answer(message, self.strings["no_target"])
+            return
+
+        if not self._grouped(message):
+            had = self._muted("pm").pop(str(user.id), None)
+            await utils.answer(
+                message,
+                self.strings["pm_unmuted" if had else "was_not"].format(self._link(user)),
+            )
             return
 
         known = self._muted(message.chat_id)
@@ -436,11 +492,14 @@ class МутМод(loader.Module):
 
     @loader.command(aliases=["муты"])
     async def mutescmd(self, message):
-        """— кто замучен в этом чате и сколько раз пробовали обойти"""
-        known = self._alive(message.chat_id)
+        """— кто замучен здесь: в личке свой список, в группе свой"""
+        here = self._grouped(message)
+        known = self._alive(message.chat_id if here else "pm")
 
         if not known:
-            await utils.answer(message, self.strings["list_empty"])
+            await utils.answer(
+                message, self.strings["list_empty" if here else "pm_empty"]
+            )
             return
 
         lines, buttons = [], []
@@ -456,13 +515,17 @@ class МутМод(loader.Module):
             buttons.append({
                 "text": self.strings["btn_unmute"].format(shown[:20]),
                 "callback": self._unmute,
-                "args": (message.chat_id, uid),
+                "args": (message.chat_id if here else "pm", uid),
             })
 
         rows = [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
         rows.append([{"text": self.strings["btn_close"], "callback": self._close}])
         await self._answer(
-            message, self.strings["list"].format(len(known), "\n".join(lines)), rows
+            message,
+            self.strings["list" if here else "pm_list"].format(
+                len(known), "\n".join(lines)
+            ),
+            rows,
         )
 
     @loader.command(aliases=["ботмут"])
@@ -517,12 +580,19 @@ class МутМод(loader.Module):
     # ------------------------------------------------------------------ #
     #  Охота на обход
     # ------------------------------------------------------------------ #
-    @loader.watcher(only_groups=True, no_commands=True)
+    @loader.watcher(no_commands=True)
     async def watcher(self, message):
-        """Сообщение в группе: не пришёл ли новый бот и не обходит ли кто мут."""
+        """Сообщение: в личке — стереть чужое, в группе — поймать обход."""
         if getattr(message, "action", None) is not None:
             if self.config["lockdown"]:
                 utils.spawn(self._doorman(message))
+
+            return
+
+        # Личка: там мы сами себе админ, и мут работает всегда
+        if getattr(message, "is_private", False):
+            if not getattr(message, "out", False):
+                utils.spawn(self._pm(message))
 
             return
 
@@ -548,6 +618,59 @@ class МутМод(loader.Module):
 
         note["tries"] = note.get("tries", 0) + 1
         utils.spawn(self._punish(message, uid, note, why))
+
+    async def _pm(self, message) -> None:
+        """Личка: сообщение замученного стираем, пока его не успели прочесть."""
+        known = self._muted("pm")
+        uid = str(getattr(message, "sender_id", "") or "")
+        note = known.get(uid)
+
+        if note is None:
+            return
+
+        if note.get("until") and note["until"] < time.time():
+            known.pop(uid, None)
+            return
+
+        note["tries"] = note.get("tries", 0) + 1
+        await self._hush(message, note)
+
+    async def _hush(self, message, note: dict) -> None:
+        """Стереть сообщение — по умолчанию и у отправителя тоже."""
+        if self.config["pm_keep"]:
+            await self._stash(message, note)
+
+        try:
+            await message.delete(revoke=self.config["pm_both"])
+        except Exception:
+            logger.info("Сообщение в личке стереть не вышло")
+
+    async def _stash(self, message, note: dict) -> None:
+        """Копия себе в избранное — до того, как сообщение исчезнет."""
+        try:
+            await self.client.send_message(
+                "me",
+                self.strings["kept"].format(
+                    utils.escape_html(note.get("name") or "—")
+                ),
+            )
+        except Exception:
+            logger.info("Заголовок копии не ушёл")
+            return
+
+        try:
+            await message.forward_to("me")
+        except Exception:
+            # Пересылку могли запретить — сохраняем хотя бы текст
+            text = (getattr(message, "raw_text", None) or "").strip()
+
+            if not text:
+                return
+
+            try:
+                await self.client.send_message("me", utils.escape_html(text))
+            except Exception:
+                logger.info("И текст сохранить не вышло")
 
     def _suspect(self, message, known: dict):
         """Кто и как обходит мут. None — если всё чисто."""
@@ -814,6 +937,11 @@ class МутМод(loader.Module):
     # ------------------------------------------------------------------ #
     def _card(self) -> str:
         rows = [
+            (
+                self.strings["lbl_both"],
+                self.strings["both_yes" if self.config["pm_both"] else "both_no"],
+            ),
+            (self.strings["lbl_keep"], self.strings["on" if self.config["pm_keep"] else "off"]),
             (self.strings["lbl_guard"], self.strings["on" if self.config["guard"] else "off"]),
             (self.strings["lbl_marks"], self.strings["on" if self.config["marks"] else "off"]),
             (self.strings["lbl_notice"], self.strings["on" if self.config["notice"] else "off"]),
@@ -837,6 +965,22 @@ class МутМод(loader.Module):
 
     def _markup(self) -> list:
         return [
+            [
+                {
+                    "text": self.strings["btn_both"].format(
+                        self.strings["on" if self.config["pm_both"] else "off"]
+                    ),
+                    "callback": self._toggle,
+                    "args": ("pm_both",),
+                },
+                {
+                    "text": self.strings["btn_keep"].format(
+                        self.strings["on" if self.config["pm_keep"] else "off"]
+                    ),
+                    "callback": self._toggle,
+                    "args": ("pm_keep",),
+                },
+            ],
             [
                 {
                     "text": self.strings["btn_guard"].format(
@@ -907,6 +1051,24 @@ class МутМод(loader.Module):
     # ------------------------------------------------------------------ #
     #  Мелочи
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _grouped(message) -> bool:
+        """Группа это или личка."""
+        return bool(
+            getattr(message, "is_group", False) or getattr(message, "is_channel", False)
+        )
+
+    def _note(self, user, until: int, why: str) -> dict:
+        """Запись о замученном — одинаковая и для лички, и для группы."""
+        return {
+            "until": until,
+            "why": why,
+            "name": self._name(user),
+            "nick": (getattr(user, "username", None) or "").lower(),
+            "at": int(time.time()),
+            "tries": 0,
+        }
+
     def _muted(self, chat_id) -> dict:
         """Замученные этого чата. Своя запись нужна вотчеру без запросов."""
         return self.pointer("muted", {}).setdefault(str(chat_id), {})
