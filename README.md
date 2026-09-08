@@ -18,7 +18,7 @@
 | [`tiktok.py`](tiktok.py) | `.tt`, `.ttinfo`, `.ttaudio`, `.ttcfg`, `.ttproxy` | видео из TikTok без водяного знака, с автором и описанием |
 | [`ai.py`](ai.py) | `.ai`, `.aimodels`, `.aikey`, `.airole`, `.aicfg` | вопрос к нейросети через Groq, модель из живого списка |
 | [`grab.py`](grab.py) | `.gm`, `.gmall`, `.gmhere`, `.gmbox`, `.gmstop` | забирает медиа из постов с запретом сохранения и обходит каналы целиком |
-| [`mute.py`](mute.py) | `.mute`, `.unmute`, `.mutes`, `.mutebots`, `.mutecfg` | мут со всеми правами разом и охота на обход через ботов |
+| [`mute.py`](mute.py) | `.mute`, `.unmute`, `.botmute`, `.mutes`, `.mutebots` | мут со всеми правами разом, охота на обход и тишина для ботов-курьеров |
 
 ---
 

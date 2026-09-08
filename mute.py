@@ -5,9 +5,14 @@
 Здесь мут выставляет все права разом, включая инлайн, — эту дыру закрывает
 сам Telegram.
 
-Второй способ обхода — когда бот постит текст от своего имени. Автора там
-знает только бот, и поймать такое можно лишь по следам: упоминанию,
-ссылке на профиль, пересылке. Модуль их и ловит, а сообщение убирает.
+Второй способ обхода — когда бот постит текст от своего имени. Просят его
+об этом в личке, а личку двух посторонних не видит никто: ни юзербот, ни
+админ, ни владелец группы. Поэтому ловим не переписку, а следы в самом
+сообщении — упоминание, ссылку на профиль, пересылку.
+
+Если следов нет, остаётся единственный надёжный рычаг: не давать боту
+писать в чате. Курьер, которому нечем передать, бесполезен — .botmute
+затыкает конкретного бота, а lockdown встречает новых на входе.
 """
 
 # meta developer: @soika
@@ -111,6 +116,27 @@ class МутМод(loader.Module):
             " тогда его видно только глазами.</i>"
         ),
         "bot_row": "▫️ {} · <b>{}</b>",
+        "bot_muted": (
+            "🤖 <b>{}</b> <b>больше не пишет здесь</b>\n\n"
+            "<i>Из чата не выгнан — просто лишён права слова. Вернуть:</i>"
+            " <code>{}unmute</code> <i>ответом на него.</i>"
+        ),
+        "bot_free": "🤖 <b>{}</b> <b>снова может писать</b>",
+        "not_a_bot": (
+            "🚫 <b>Это не бот</b>\n\n"
+            "<i>Для людей есть</i> <code>{}mute</code>"
+        ),
+        "bot_target": (
+            "🚫 <b>Какого бота заткнуть?</b>\n\n"
+            "<i>Ответь на его сообщение или назови</i> <code>@ник</code>"
+        ),
+        "locked": (
+            "🔒 <b>Новый бот встречен на входе</b>\n\n"
+            "├ <b>Кто:</b> {}\n"
+            "└ <b>Что сделано:</b> лишён права писать\n\n"
+            "<i>Разрешить:</i> <code>{}unmute</code> <i>ответом или добавь его"
+            " в белый список.</i>"
+        ),
         "bot_kicked": "🚪 <b>{}</b> <b>выставлен из чата</b>",
         "bot_failed": "⚠️ <b>{}</b> <b>не выставился:</b> <code>{}</code>",
         # ── настройки ───────────────────────────────────────────────────
@@ -118,6 +144,11 @@ class МутМод(loader.Module):
         "lbl_guard": "Ловлю обход",
         "lbl_marks": "По следам автора",
         "lbl_notice": "Пишу в чат",
+        "lbl_lock": "Новые боты",
+        "lock_on": "сразу без слова",
+        "lock_off": "как есть",
+        "lbl_allowed": "Белый список",
+        "none": "<i>пуст</i>",
         "lbl_kick": "Выгонять бота",
         "lbl_after": "После попыток",
         "kick_off": "не выгонять",
@@ -127,6 +158,7 @@ class МутМод(loader.Module):
         "btn_guard": "🛡 Ловля: {}",
         "btn_marks": "🔍 По следам: {}",
         "btn_notice": "💬 Писать в чат: {}",
+        "btn_lock": "🔒 Новые боты: {}",
         "btn_kick": "🚪 Выгонять бота: {}",
         "btn_unmute": "🔊 {}",
         "btn_close": "✖️ Закрыть",
@@ -186,12 +218,38 @@ class МутМод(loader.Module):
             " your own eyes will spot it.</i>"
         ),
         "bot_row": "▫️ {} · <b>{}</b>",
+        "bot_muted": (
+            "🤖 <b>{}</b> <b>cannot post here any more</b>\n\n"
+            "<i>Not removed — just denied the right to speak. To undo:</i>"
+            " <code>{}unmute</code> <i>as a reply to it.</i>"
+        ),
+        "bot_free": "🤖 <b>{}</b> <b>can post again</b>",
+        "not_a_bot": (
+            "🚫 <b>That is not a bot</b>\n\n"
+            "<i>For people there is</i> <code>{}mute</code>"
+        ),
+        "bot_target": (
+            "🚫 <b>Which bot to silence?</b>\n\n"
+            "<i>Reply to its message or name a</i> <code>@username</code>"
+        ),
+        "locked": (
+            "🔒 <b>A new bot was met at the door</b>\n\n"
+            "├ <b>Who:</b> {}\n"
+            "└ <b>Done:</b> denied the right to post\n\n"
+            "<i>To allow:</i> <code>{}unmute</code> <i>as a reply, or add it"
+            " to the allow list.</i>"
+        ),
         "bot_kicked": "🚪 <b>{}</b> <b>was removed from the chat</b>",
         "bot_failed": "⚠️ <b>{}</b> <b>was not removed:</b> <code>{}</code>",
         "cfg": "⚙️ <b>Mute</b>\n\n{}",
         "lbl_guard": "Catching bypass",
         "lbl_marks": "By author traces",
         "lbl_notice": "Posting in chat",
+        "lbl_lock": "New bots",
+        "lock_on": "silenced at once",
+        "lock_off": "left alone",
+        "lbl_allowed": "Allow list",
+        "none": "<i>empty</i>",
         "lbl_kick": "Remove the bot",
         "lbl_after": "After tries",
         "kick_off": "do not remove",
@@ -200,6 +258,7 @@ class МутМод(loader.Module):
         "btn_guard": "🛡 Catching: {}",
         "btn_marks": "🔍 Traces: {}",
         "btn_notice": "💬 Post in chat: {}",
+        "btn_lock": "🔒 New bots: {}",
         "btn_kick": "🚪 Remove bot: {}",
         "btn_unmute": "🔊 {}",
         "btn_close": "✖️ Close",
@@ -232,6 +291,21 @@ class МутМод(loader.Module):
             True,
             "Писать в чат, что обход пойман",
             validator=loader.validators.Boolean(),
+        ),
+        loader.ConfigValue(
+            "lockdown",
+            False,
+            (
+                "Встречать новых ботов на входе: сразу лишать права писать."
+                " Против ботов-курьеров это единственное, что работает наверняка"
+            ),
+            validator=loader.validators.Boolean(),
+        ),
+        loader.ConfigValue(
+            "allowed",
+            [],
+            "Боты, которых lockdown не трогает: @ники или id",
+            validator=loader.validators.Series(),
         ),
         loader.ConfigValue(
             "kick_bots",
@@ -328,6 +402,14 @@ class МутМод(loader.Module):
         known = self._muted(message.chat_id)
         had = known.pop(str(user.id), None)
 
+        # Заткнутый бот живёт в своём списке — снимаем пометку и там
+        note = self._bots(message.chat_id).get(str(user.id))
+        was_bot = bool(note and note.get("silenced"))
+
+        if note:
+            note["silenced"] = False
+            note["kicked"] = False
+
         try:
             await self.client(
                 functions.channels.EditBannedRequest(
@@ -341,6 +423,10 @@ class МутМод(loader.Module):
             await utils.answer(
                 message, self.strings["failed"].format(utils.escape_html(str(error)))
             )
+            return
+
+        if was_bot:
+            await utils.answer(message, self.strings["bot_free"].format(self._link(user)))
             return
 
         await utils.answer(
@@ -379,6 +465,35 @@ class МутМод(loader.Module):
             message, self.strings["list"].format(len(known), "\n".join(lines)), rows
         )
 
+    @loader.command(aliases=["ботмут"])
+    async def botmutecmd(self, message):
+        """<реплай/@бот> — лишить бота права писать в этом чате"""
+        user = await self._target(message)
+
+        if user is None:
+            await utils.answer(message, self.strings["bot_target"].format(self._prefix))
+            return
+
+        if not getattr(user, "bot", False):
+            await utils.answer(message, self.strings["not_a_bot"].format(self._prefix))
+            return
+
+        if not await self._silence(message.peer_id, user):
+            await utils.answer(message, self.strings["not_admin"])
+            return
+
+        note = self._bots(message.chat_id).setdefault(
+            str(user.id), {"tries": 0, "name": "", "kicked": False}
+        )
+        note["name"] = self._name(user)
+        note["id"] = int(user.id)
+        note["silenced"] = True
+
+        await utils.answer(
+            message,
+            self.strings["bot_muted"].format(self._link(user), self._prefix),
+        )
+
     @loader.command(aliases=["мутботы"])
     async def mutebotscmd(self, message):
         """— боты, через которых обходили мут в этом чате"""
@@ -404,7 +519,13 @@ class МутМод(loader.Module):
     # ------------------------------------------------------------------ #
     @loader.watcher(only_groups=True, no_commands=True)
     async def watcher(self, message):
-        """Сообщение в группе: не обходит ли кто мут."""
+        """Сообщение в группе: не пришёл ли новый бот и не обходит ли кто мут."""
+        if getattr(message, "action", None) is not None:
+            if self.config["lockdown"]:
+                utils.spawn(self._doorman(message))
+
+            return
+
         if not self.config["guard"]:
             return
 
@@ -483,6 +604,66 @@ class МутМод(loader.Module):
 
         if helper and self.config["kick_bots"] and helper["tries"] >= self.config["patience"]:
             await self._kick(message, helper)
+
+    async def _doorman(self, message) -> None:
+        """Нового бота встречаем на входе: курьеру нечем передавать."""
+        added = getattr(getattr(message, "action", None), "users", None) or []
+
+        for uid in added:
+            try:
+                who = await self.client.get_entity(uid)
+            except Exception:
+                logger.info("Пришедшего %s опознать не вышло", uid)
+                continue
+
+            if not getattr(who, "bot", False) or self._welcome(who):
+                continue
+
+            if not await self._silence(message.peer_id, who):
+                continue
+
+            note = self._bots(message.chat_id).setdefault(
+                str(who.id), {"tries": 0, "name": "", "kicked": False}
+            )
+            note.update({"name": self._name(who), "id": int(who.id), "silenced": True})
+
+            try:
+                await self.client.send_message(
+                    message.peer_id,
+                    self.strings["locked"].format(self._link(who), self._prefix),
+                )
+            except Exception:
+                logger.info("Про встреченного бота написать не вышло")
+
+    def _welcome(self, who) -> bool:
+        """Есть ли бот в белом списке."""
+        nick = (getattr(who, "username", None) or "").lower()
+
+        for item in self.config["allowed"] or []:
+            mark = str(item).lstrip("@").lower()
+
+            if mark and mark in {nick, str(who.id)}:
+                return True
+
+        return False
+
+    async def _silence(self, chat, who) -> bool:
+        """Лишить права писать, не выгоняя. False — если не хватило прав."""
+        try:
+            await self.client(
+                functions.channels.EditBannedRequest(
+                    channel=chat,
+                    participant=who,
+                    banned_rights=self._rights(0),
+                )
+            )
+        except errors.ChatAdminRequiredError:
+            return False
+        except Exception:
+            logger.exception("Бота заткнуть не вышло")
+            return False
+
+        return True
 
     async def _count_bot(self, message):
         """Запомнить бота, через которого прошёл обход."""
@@ -637,6 +818,15 @@ class МутМод(loader.Module):
             (self.strings["lbl_marks"], self.strings["on" if self.config["marks"] else "off"]),
             (self.strings["lbl_notice"], self.strings["on" if self.config["notice"] else "off"]),
             (
+                self.strings["lbl_lock"],
+                self.strings["lock_on" if self.config["lockdown"] else "lock_off"],
+            ),
+            (
+                self.strings["lbl_allowed"],
+                utils.escape_html(", ".join(str(item) for item in self.config["allowed"]))
+                or self.strings["none"],
+            ),
+            (
                 self.strings["lbl_kick"],
                 self.strings["on"] if self.config["kick_bots"] else self.strings["kick_off"],
             ),
@@ -664,6 +854,13 @@ class МутМод(loader.Module):
                 },
             ],
             [
+                {
+                    "text": self.strings["btn_lock"].format(
+                        self.strings["on" if self.config["lockdown"] else "off"]
+                    ),
+                    "callback": self._toggle,
+                    "args": ("lockdown",),
+                },
                 {
                     "text": self.strings["btn_notice"].format(
                         self.strings["on" if self.config["notice"] else "off"]
