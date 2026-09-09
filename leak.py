@@ -49,17 +49,30 @@ class УтечкиМод(loader.Module):
         "walking": "📵 <b>Проверено: {}</b> · с номером: {}",
         "no_rights": (
             "🚫 <b>Список участников не отдаётся</b>\n\n"
-            "<i>На канале для этого нужны права админа.</i>"
+            "├ Полный список Telegram даёт только админам\n"
+            "└ <i>Включи запасной путь по истории:</i>"
+            " <code>{}leakcfg</code> <i>→ 🕓</i>"
+        ),
+        "reading_history": "🕓 <b>Читаю историю: {}</b> · нашёл людей: {}",
+        "src_roster": "список участников",
+        "src_history": "история сообщений",
+        "src_both": "список и история",
+        "partial": (
+            "<i>Список участников закрыт — Telegram отдаёт его только"
+            " админам. Люди собраны из истории, поэтому в охват попали лишь"
+            " те, кто в чате писал.</i>"
         ),
         "clean": (
             "✅ <b>Открытых номеров нет</b>\n\n"
             "├ <b>Проверено:</b> {}\n"
+            "├ <b>Откуда:</b> {}\n"
             "└ <i>Ни у кого номер не виден — приватность закрыта.</i>"
         ),
         "found": (
             "📵 <b>Найдены открытые номера</b>\n\n"
             "├ <b>Проверено:</b> {}\n"
             "├ <b>Светят номер:</b> {}\n"
+            "├ <b>Откуда:</b> {}\n"
             "└ <b>Файл:</b> {}\n\n"
             "<i>Это те, кто сам открыл номер тебе. Скрытых тут нет.</i>"
         ),
@@ -108,17 +121,30 @@ class УтечкиМод(loader.Module):
         "walking": "📵 <b>Checked: {}</b> · with a number: {}",
         "no_rights": (
             "🚫 <b>The member list is not given out</b>\n\n"
-            "<i>A channel needs admin rights for that.</i>"
+            "├ Telegram gives the full list to admins only\n"
+            "└ <i>Turn on the history fallback:</i>"
+            " <code>{}leakcfg</code> <i>→ 🕓</i>"
+        ),
+        "reading_history": "🕓 <b>Reading history: {}</b> · people found: {}",
+        "src_roster": "member list",
+        "src_history": "message history",
+        "src_both": "list and history",
+        "partial": (
+            "<i>The member list is closed — Telegram gives it to admins only."
+            " People were collected from history, so only those who wrote in"
+            " the chat are covered.</i>"
         ),
         "clean": (
             "✅ <b>No exposed numbers</b>\n\n"
             "├ <b>Checked:</b> {}\n"
+            "├ <b>Source:</b> {}\n"
             "└ <i>Nobody's number is visible — privacy is closed.</i>"
         ),
         "found": (
             "📵 <b>Exposed numbers found</b>\n\n"
             "├ <b>Checked:</b> {}\n"
             "├ <b>Expose a number:</b> {}\n"
+            "├ <b>Source:</b> {}\n"
             "└ <b>File:</b> {}\n\n"
             "<i>These opened the number to you themselves. No hidden ones here.</i>"
         ),
@@ -175,6 +201,30 @@ class УтечкиМод(loader.Module):
             validator=loader.validators.Boolean(),
         ),
         loader.ConfigValue(
+            "fallback",
+            True,
+            (
+                "Если список участников закрыт (Telegram отдаёт его только"
+                " админам) — собирать людей из истории сообщений"
+            ),
+            validator=loader.validators.Boolean(),
+        ),
+        loader.ConfigValue(
+            "depth",
+            3000,
+            "Сколько сообщений истории просмотреть в запасном пути",
+            validator=loader.validators.Integer(minimum=100, maximum=200000),
+        ),
+        loader.ConfigValue(
+            "aggressive",
+            False,
+            (
+                "Перебирать список участников поиском по буквам. Помогает в"
+                " больших чатах, где список обрезается, но не там, где он закрыт"
+            ),
+            validator=loader.validators.Boolean(),
+        ),
+        loader.ConfigValue(
             "limit",
             0,
             "Скольких участников проверить максимум, 0 — всех",
@@ -214,35 +264,21 @@ class УтечкиМод(loader.Module):
     #  Проверка
     # ------------------------------------------------------------------ #
     async def _scan(self, sent, chat) -> None:
-        limit = self.config["limit"] or None
-        rows, seen, drawn = [], 0, 0
+        """Собрать людей — из списка участников, а если он закрыт, из истории."""
+        rows, known = [], set()
+        seen = 0
+        closed = False
 
         try:
-            async for user in self.client.iter_participants(chat, limit=limit):
-                seen += 1
-
-                if seen - drawn >= EVERY:
-                    drawn = seen
-                    await self._tick(sent, seen, len(rows))
-
-                if self._skip(user):
-                    continue
-
-                phone = getattr(user, "phone", None)
-
-                if phone:
-                    rows.append(self._row(user, phone))
+            seen, rows, known = await self._from_roster(sent, chat)
         except errors.FloodWaitError as error:
             await utils.answer(
                 sent,
-                self.strings["flood"].format(
-                    self._span(error.seconds), seen, len(rows)
-                ),
+                self.strings["flood"].format(self._span(error.seconds), 0, 0),
             )
             return
         except errors.ChatAdminRequiredError:
-            await utils.answer(sent, self.strings["no_rights"])
-            return
+            closed = True
         except Exception as error:
             logger.exception("Список участников не прочитался")
             await utils.answer(
@@ -250,11 +286,133 @@ class УтечкиМод(loader.Module):
             )
             return
 
+        # Списка может не быть вовсе, а может прийти жалкая горстка админов —
+        # второе Telegram отказом не считает, поэтому сверяем с числом людей
+        total = int(getattr(chat, "participants_count", 0) or 0)
+        thin = bool(total) and seen * 2 < total
+        source = "roster"
+
+        if closed or thin:
+            if not self.config["fallback"]:
+                if closed:
+                    await utils.answer(
+                        sent, self.strings["no_rights"].format(self._prefix)
+                    )
+                    return
+            else:
+                try:
+                    walked, extra = await self._from_history(sent, chat, known)
+                except errors.FloodWaitError as error:
+                    await utils.answer(
+                        sent,
+                        self.strings["flood"].format(
+                            self._span(error.seconds), seen, len(rows)
+                        ),
+                    )
+                    return
+                except Exception as error:
+                    logger.exception("История не прочиталась")
+
+                    if closed:
+                        await utils.answer(
+                            sent,
+                            self.strings["broke"].format(utils.escape_html(str(error))),
+                        )
+                        return
+
+                    walked, extra = 0, []
+
+                seen += walked
+                rows.extend(extra)
+                source = "history" if closed else "both"
+
+        where = self.strings[f"src_{source}"]
+
         if not rows:
-            await utils.answer(sent, self.strings["clean"].format(seen))
+            answer = self.strings["clean"].format(seen, where)
+
+            if source != "roster":
+                answer = f"{answer}\n\n{self.strings['partial']}"
+
+            await utils.answer(sent, answer)
             return
 
-        await self._deliver(sent, chat, rows, seen)
+        await self._deliver(sent, chat, rows, seen, where, source != "roster")
+
+    async def _from_roster(self, sent, chat):
+        """Пройти список участников. Вернуть (сколько, строки, чьи id видели)."""
+        limit = self.config["limit"] or None
+        rows, known = [], set()
+        seen = drawn = 0
+        walker = self.client.iter_participants(
+            chat, limit=limit, aggressive=self.config["aggressive"]
+        )
+
+        async for user in walker:
+            seen += 1
+            known.add(int(getattr(user, "id", 0) or 0))
+
+            if seen - drawn >= EVERY:
+                drawn = seen
+                await self._tick(sent, seen, len(rows))
+
+            if self._skip(user):
+                continue
+
+            phone = getattr(user, "phone", None)
+
+            if phone:
+                rows.append(self._row(user, phone))
+
+        return seen, rows, known
+
+    async def _from_history(self, sent, chat, known: set):
+        """Кто писал в чате: список закрыт, а история — нет."""
+        found, walked, drawn = set(), 0, 0
+
+        async for post in self.client.iter_messages(
+            chat, limit=self.config["depth"]
+        ):
+            walked += 1
+            uid = getattr(post, "sender_id", None)
+
+            # Отрицательные id — это каналы и анонимные админы, не люди
+            if uid and int(uid) > 0 and int(uid) not in known:
+                found.add(int(uid))
+
+            if walked - drawn >= EVERY:
+                drawn = walked
+                await self._tick_history(sent, walked, len(found))
+
+        rows = []
+
+        for user in await self._people(found):
+            if self._skip(user):
+                continue
+
+            phone = getattr(user, "phone", None)
+
+            if phone:
+                rows.append(self._row(user, phone))
+
+        return len(found), rows
+
+    async def _people(self, ids: set) -> list:
+        """Опознать собранных пачками: по одному это тысячи запросов."""
+        people, batch = [], sorted(ids)
+
+        for start in range(0, len(batch), 100):
+            piece = batch[start : start + 100]
+
+            try:
+                got = await self.client.get_entity(piece)
+            except Exception:
+                logger.info("Пачку из %s человек опознать не вышло", len(piece))
+                continue
+
+            people.extend(got if isinstance(got, list) else [got])
+
+        return people
 
     def _skip(self, user) -> bool:
         if self.config["skip_bots"] and getattr(user, "bot", False):
@@ -273,7 +431,9 @@ class УтечкиМод(loader.Module):
             "name": self._name(user),
         }
 
-    async def _deliver(self, sent, chat, rows: list, seen: int) -> None:
+    async def _deliver(
+        self, sent, chat, rows: list, seen: int, where: str, partial: bool
+    ) -> None:
         blob = self._build(rows, chat)
         title = getattr(chat, "title", None) or getattr(chat, "id", "—")
         to_here = self.config["deliver"] == "here"
@@ -291,10 +451,17 @@ class УтечкиМод(loader.Module):
             await self.client.send_file("me", blob, force_document=True)
             to_here = False
 
-        where = self.strings["to_here" if to_here else "to_saved"]
-        await utils.answer(
-            sent, self.strings["found"].format(seen, len(rows), where)
+        answer = self.strings["found"].format(
+            seen,
+            len(rows),
+            where,
+            self.strings["to_here" if to_here else "to_saved"],
         )
+
+        if partial:
+            answer = f"{answer}\n\n{self.strings['partial']}"
+
+        await utils.answer(sent, answer)
 
     def _build(self, rows: list, chat):
         """Собрать файл выбранного формата в память."""
@@ -426,8 +593,15 @@ class УтечкиМод(loader.Module):
             return None
 
     async def _tick(self, sent, seen: int, found: int) -> None:
+        await self._draw(sent, self.strings["walking"].format(seen, found))
+
+    async def _tick_history(self, sent, walked: int, found: int) -> None:
+        await self._draw(sent, self.strings["reading_history"].format(walked, found))
+
+    @staticmethod
+    async def _draw(sent, text: str) -> None:
         try:
-            await utils.answer(sent, self.strings["walking"].format(seen, found))
+            await utils.answer(sent, text)
         except Exception:
             logger.info("Ход проверки дорисовать не вышло")
 
